@@ -43,11 +43,11 @@ TEST_F(MemoryStorageTest, Term) {
     };
 
     std::vector<Test> tests = {
-        {2, 0, craft::Status::Error("requested index is unavailable due to compaction [offset: %d, i: 2]", storage_.ents_[0].index())},
+        {2, 0, craft::Status::Error("%s [offset: %d, i: 2]", craft::kErrCompacted, storage_.ents_[0].index())},
         {3, 3, craft::Status::OK()},
         {4, 4, craft::Status::OK()},
         {5, 5, craft::Status::OK()},
-        {6, 0, craft::Status::Error("requested entry at index is unavailable [rel_index: %d, len(ents_): %d]", 6-(storage_.ents_[0].index()), storage_.ents_.size())}
+        {6, 0, craft::Status::Error("%s [rel_index: %d, len(ents_): %d]", craft::kErrUnavailable, 6-(storage_.ents_[0].index()), storage_.ents_.size())}
     };
 
     for (int i = 0; i < tests.size(); i++) {
@@ -74,8 +74,8 @@ TEST_F(MemoryStorageTest, Entries) {
     };
 
     std::vector<Test> tests = {
-        {2, 6, std::numeric_limits<uint64_t>::max(), craft::Status::Error("requested index is unavailable due to compaction [offset: %d, lo: 2]", storage_.ents_[0].index()), {}},
-        {3, 4, std::numeric_limits<uint64_t>::max(), craft::Status::Error("requested index is unavailable due to compaction [offset: %d, lo: 3]", storage_.ents_[0].index()), {}},
+        {2, 6, std::numeric_limits<uint64_t>::max(), craft::Status::Error("%s [offset: %d, lo: 2]", craft::kErrCompacted, storage_.ents_[0].index()), {}},
+        {3, 4, std::numeric_limits<uint64_t>::max(), craft::Status::Error("%s [offset: %d, lo: 3]", craft::kErrCompacted, storage_.ents_[0].index()), {}},
         {4, 5, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {make_entry(4, 4)}},
         {4, 6, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {make_entry(4, 4), make_entry(5, 5)}},
         {4, 7, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {make_entry(4, 4), make_entry(5, 5), make_entry(6, 6)}},
@@ -133,8 +133,8 @@ TEST_F(MemoryStorageTest, Compact) {
     };
 
     std::vector<Test> tests = {
-        {2, craft::Status::Error("requested index is unavailable due to compaction [compact_index: 2, offset: %d]", storage_.ents_[0].index()), 3, 3, 3},
-        {3, craft::Status::Error("requested index is unavailable due to compaction [compact_index: 3, offset: %d]", storage_.ents_[0].index()), 3, 3, 3},
+        {2, craft::Status::Error("%s [compact_index: 2, offset: %d]", craft::kErrCompacted, storage_.ents_[0].index()), 3, 3, 3},
+        {3, craft::Status::Error("%s [compact_index: 3, offset: %d]", craft::kErrCompacted, storage_.ents_[0].index()), 3, 3, 3},
         {4, craft::Status::OK(), 4, 4, 2},
         {5, craft::Status::OK(), 5, 5, 1}
     };

@@ -13,19 +13,19 @@
 namespace craft {
 // ErrCompacted is returned by Storage.Entries/Compact when a requested
 // index is unavailable because it predates the last snapshot.
-const char* kErrCompacted = "requested index is unavailable due to compaction";
+const char* const kErrCompacted = "requested index is unavailable due to compaction";
 
 // ErrSnapOutOfDate is returned by Storage.CreateSnapshot when a requested
 // index is older than the existing snapshot.
-const char* kErrSnapOutOfDate = "requested index is older than the existing snapshot";
+const char* const kErrSnapOutOfDate = "requested index is older than the existing snapshot";
 
 // ErrUnavailable is returned by Storage interface when the requested log entries
 // are unavailable.
-const char* kErrUnavailable = "requested entry at index is unavailable";
+const char* const kErrUnavailable = "requested entry at index is unavailable";
 
 // ErrSnapshotTemporarilyUnavailable is returned by the Storage interface when the required
 // snapshot is temporarily unavailable.
-const char* kErrSnapshotTemporarilyUnavailable = "snapshot is temporarily unavailable";
+const char* const kErrSnapshotTemporarilyUnavailable = "snapshot is temporarily unavailable";
 
 // Storage is an interface that may be implemented by the application
 // to retrieve log entries from storage.
@@ -98,7 +98,6 @@ class MemoryStorage : public Storage {
  private:
     uint64_t LastIndexUnSafe() const;
     uint64_t FirstIndexUnSafe() const;
-    void LimitSize(std::vector<raftpb::Entry>& ents, uint64_t max_size) const;
 
  private:
     // Protects access to all fields. Most methods of MemoryStorage are

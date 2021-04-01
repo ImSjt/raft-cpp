@@ -3,6 +3,7 @@
 #include <cassert>
 
 #include "common/logger.h"
+#include "common/util.h"
 
 namespace craft {
 
@@ -19,10 +20,8 @@ RaftLog::RaftLog(std::shared_ptr<Storage>& storage, uint64_t max_next_ents_size)
     assert(storage_ != nullptr);
 
     uint64_t first_index = storage->FirstIndex();
-    assert(first_index != 0);
 
     uint64_t last_index = storage->LastIndex();
-    assert(last_index != 0);
 
     unstable_.offset_ = last_index + 1;
 
@@ -253,15 +252,73 @@ uint64_t RaftLog::FindConflict(const std::vector<raftpb::Entry>& ents) const {
 }
 
 Status RaftLog::Slice(uint64_t lo, uint64_t hi, uint64_t max_size, std::vector<raftpb::Entry>& ents) const {
-    MustCheckOutOfBounds(lo, hi);
+    Status status = MustCheckOutOfBounds(lo, hi);
+    if (!status.ok()) {
+        return status;
+    }
+
+    if (lo == hi) {
+        return Status::OK();
+    }
+
+    if (lo < unstable_.offset_) {
+        assert(storage_ != nullptr);
+        status = storage_->Entries(lo, std::min(hi, unstable_.offset_), max_size, ents);
+        if (!status.ok()) {
+            if (std::strstr(status.Str(), kErrCompacted)) {
+                return status;
+            } else if (std::strstr(status.Str(), kErrUnavailable)) {
+                LOG_FATAL("entries[%d:%d) is unavailable from storage", lo, std::min(hi, unstable_.offset_));
+            } else {
+                LOG_FATAL("unexpected error: %s", status.Str());
+            }
+        }
+
+        // check if ents has reached the size limitation
+        if (static_cast<uint64_t>(ents.size()) < std::min(hi, unstable_.offset_)-lo) {
+            return Status::OK();
+        }
+    }
+
+    if (hi > unstable_.offset_) {
+        unstable_.Slice(std::max(lo, unstable_.offset_), hi, ents);
+    }
+
+    Util::LimitSize(ents, max_size);
+
+    return Status::OK();
 }
 
 Status RaftLog::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
+    if  (lo > hi) {
+        LOG_FATAL("invalid slice %d > %d", lo, hi);
+    }
 
+    uint64_t fi = FirstIndex();
+    if (lo < fi) {
+        return Status::Error("%s [lo: %d, fi: %d]", kErrCompacted, lo, fi);
+    }
+
+    uint64_t len = LastIndex() + 1 - fi;
+    if (hi > fi+len) {
+        LOG_FATAL("slice[%d,%d) out of bound [%d,%d]", lo, hi, fi, LastIndex());
+    }
+
+    return Status::OK();
 }
 
 uint64_t RaftLog::ZeroTermOnErrCompacted(uint64_t t, const Status& status) const {
+    if (status.ok()) {
+        return t;
+    }
 
+    if (std::strstr(status.Str(), kErrCompacted)) {
+        return 0;
+    }
+
+    LOG_FATAL("unexpected error: %s", status.Str());
+
+    return 0;
 }
 
 } //namespace craft

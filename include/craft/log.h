@@ -14,11 +14,12 @@ namespace craft {
 
 class RaftLog : public noncopyable {
 public:
+    static const uint64_t kNoLimit = std::numeric_limits<uint64_t>::max();
     // CreateNew returns log using the given storage and default options. It
     // recovers the log to the state that it just commits and applies the
     // latest snapshot.
     static RaftLog* CreateNew(std::shared_ptr<Storage>& storage) {
-        return CreateNewWithSize(storage, std::numeric_limits<uint64_t>::max());
+        return CreateNewWithSize(storage, kNoLimit);
     }
 
     // CreateNewWithSize returns a log using the given storage and max
@@ -26,6 +27,8 @@ public:
     static RaftLog* CreateNewWithSize(std::shared_ptr<Storage>& storage, uint64_t max_next_ents_size) {
         return new RaftLog(storage, max_next_ents_size);
     }
+
+    RaftLog(std::shared_ptr<Storage>& storage, uint64_t max_next_ents_size=kNoLimit);
 
     std::string String() const {
         char buf[1024];
@@ -56,7 +59,7 @@ public:
 
     uint64_t LastIndex() const;
 
-    void CommitTo(uint64_t tocommit);
+    void CommitTo(uint64_t tocommit); // private?
 
     void AppliedTo(uint64_t i);
 
@@ -87,8 +90,6 @@ public:
     void Restore(const raftpb::Snapshot& snapshot);
 
 protected:
-    RaftLog(std::shared_ptr<Storage>& storage, uint64_t max_next_ents_size);
-
     uint64_t Append(const std::vector<raftpb::Entry>& ents);
     // FindConflict finds the index of the conflict.
     // It returns the first pair of conflicting entries between the existing

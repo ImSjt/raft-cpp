@@ -53,9 +53,12 @@ target_sources(craft
     "src/common/logger.cc"
     "src/common/logger.h"
     "src/common/status.cc"
+    "src/common/util.cc"
+    "src/common/util.h"
     "src/raft/raft.pb.cc"
     "src/raft/storage.cc"
     "src/raft/log_unstable.cc"
+    "src/raft/log.cc"
 
     # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
     $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -64,6 +67,7 @@ target_sources(craft
     "${CRAFT_PUBLIC_INCLUDE_DIR}/noncopyable.h"
     "${CRAFT_PUBLIC_INCLUDE_DIR}/storage.h"
     "${CRAFT_PUBLIC_INCLUDE_DIR}/log_unstable.h"
+    "${CRAFT_PUBLIC_INCLUDE_DIR}/log.h"
 )
 target_link_libraries(craft "${EXTRA_LIBS}")
 
@@ -86,3 +90,4 @@ endfunction(craft_test)
 
 craft_test("src/raft/storage_test.cc")
 craft_test("src/raft/log_unstable_test.cc")
+craft_test("src/raft/log_test.cc")

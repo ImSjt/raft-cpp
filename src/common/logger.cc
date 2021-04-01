@@ -48,7 +48,7 @@ void Logger::Write(LogLevel level, const char* file, int32_t line, const char* f
     auto tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     struct tm* t = localtime(&tt);
     int32_t len = snprintf(buffer.Current(), buffer.Avail(), "%4d%02d%02d %02d:%02d:%02d",
-                        t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+                            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                             t->tm_hour, t->tm_min, t->tm_sec);
     buffer.Add(len);
 
@@ -64,13 +64,14 @@ void Logger::Write(LogLevel level, const char* file, int32_t line, const char* f
 
     // file and line
     len = snprintf(buffer.Current(), buffer.Avail(), " [%s:%d]\n", file, line);
-    buffer.Add(len);
-
-    log_output_(buffer.Data(), true);
+    buffer.Add(len);    
 
     if (level == kFatal) {
+        log_output_(buffer.Data(), false);
         abort();
     }
+
+    log_output_(buffer.Data(), true);
 }
 
 static void DefaultLogOutput(const char* str, bool flush) {

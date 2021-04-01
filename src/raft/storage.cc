@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "common/logger.h"
+#include "common/util.h"
 
 namespace craft {
 
@@ -48,7 +49,7 @@ Status MemoryStorage::Entries(uint64_t lo, uint64_t hi, uint64_t max_size, std::
 
     // copy entries[lo, hi)
     ents = std::vector<raftpb::Entry>(&ents_[lo-offset], &ents_[hi-offset]);
-    LimitSize(ents, max_size);
+    Util::LimitSize(ents, max_size);
 
     return Status::OK();
 }
@@ -217,21 +218,6 @@ uint64_t MemoryStorage::LastIndexUnSafe() const {
 uint64_t MemoryStorage::FirstIndexUnSafe() const {
     assert(!ents_.empty());
     return ents_[0].index() + 1;
-}
-
-void MemoryStorage::LimitSize(std::vector<raftpb::Entry>& ents, uint64_t max_size) const {
-    if (ents.empty()) {
-        return;
-    }
-
-    uint64_t size = 0;
-    for (auto it = ents.begin(); it != ents.end(); ++it) {
-        size += static_cast<uint64_t>(it->ByteSizeLong());
-        if (size > max_size) {
-            ents.erase(it, ents.end());
-            break;
-        }
-    }
 }
 
 } // namespace craft

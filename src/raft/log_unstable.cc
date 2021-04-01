@@ -82,9 +82,13 @@ void Unstable::TruncateAndAppend(const std::vector<raftpb::Entry>& ents) {
         entries_.insert(entries_.end(), ents.begin(), ents.end());
     } else if (after <= offset_) {
         LOG_INFO("replace the unstable entries from index %d", after);
+        // The log is being truncated to before our current offset
+		// portion, so set the offset and replace the entries
         offset_ = after;
         entries_ = ents;
     } else {
+        // truncate to after and copy to u.entries
+		// then append
         MustCheckOutOfBounds(offset_, after);
         entries_.erase(entries_.begin()+(after-offset_), entries_.end());
         entries_.insert(entries_.end(), ents.begin(), ents.end());
@@ -105,7 +109,7 @@ void Unstable::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
         LOG_FATAL("invalid unstable.slice %d > %d", lo, hi);
     }
 
-    uint64_t upper = offset_ + uint64_t(entries_.size());
+    uint64_t upper = offset_ + static_cast<uint64_t>(entries_.size());
     if (lo < offset_ || hi > upper) {
         LOG_FATAL("unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, offset_, upper);
     }

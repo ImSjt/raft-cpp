@@ -8,7 +8,6 @@ namespace craft {
 
 class Status {
  public:
-    // Create a success status.
     Status() : state_(nullptr) {}
     ~Status() { delete[] state_; }
 
@@ -17,7 +16,7 @@ class Status {
 
     Status(Status&& rhs) : state_(rhs.state_) { rhs.state_ = nullptr; }
     Status& operator=(Status&& rhs);
-
+    // Create a success status.
     static Status OK() { return Status{}; }
 
     static Status Error(const char* format, ...);
