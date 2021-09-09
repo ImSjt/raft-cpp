@@ -36,7 +36,7 @@ execute_process(
 )
 
 execute_process(
-    COMMAND mv ${PROJECT_SOURCE_DIR}/include/craft/raft.pb.cc ${PROJECT_SOURCE_DIR}/src/raft/
+    COMMAND mv ${PROJECT_SOURCE_DIR}/include/craft/raft.pb.cc ${PROJECT_SOURCE_DIR}/src/
 )
 
 list(APPEND EXTRA_LIBS "${PROTOBUF_LIBRARY}")
@@ -55,10 +55,10 @@ target_sources(craft
     "src/common/status.cc"
     "src/common/util.cc"
     "src/common/util.h"
-    "src/raft/raft.pb.cc"
-    "src/raft/storage.cc"
-    "src/raft/log_unstable.cc"
-    "src/raft/log.cc"
+    "src/raft.pb.cc"
+    "src/storage.cc"
+    "src/log_unstable.cc"
+    "src/log.cc"
 
     # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
     $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -88,6 +88,6 @@ function(craft_test test_file)
     
 endfunction(craft_test)
 
-craft_test("src/raft/storage_test.cc")
-craft_test("src/raft/log_unstable_test.cc")
-craft_test("src/raft/log_test.cc")
+craft_test("src/storage_test.cc")
+craft_test("src/log_unstable_test.cc")
+craft_test("src/log_test.cc")

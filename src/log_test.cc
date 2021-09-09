@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 
+#include <cstring>
 #include <cassert>
 #include <memory>
 
