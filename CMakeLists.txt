@@ -59,6 +59,11 @@ target_sources(craft
     "src/storage.cc"
     "src/log_unstable.cc"
     "src/log.cc"
+    "src/quorum/quorum.h"
+    "src/quorum/majority.cc"
+    "src/quorum/majority.h"
+    "src/quorum/joint.cc"
+    "src/quorum/joint.h"
 
     # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
     $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -82,7 +87,7 @@ function(craft_test test_file)
         "${test_file}"
     )
 
-    target_link_libraries("${test_target_name}" gmock gtest_main craft)
+    target_link_libraries("${test_target_name}" gtest gtest_main craft)
 
     add_test(NAME "${test_target_name}" COMMAND "${test_target_name}")
     
@@ -91,3 +96,5 @@ endfunction(craft_test)
 craft_test("src/storage_test.cc")
 craft_test("src/log_unstable_test.cc")
 craft_test("src/log_test.cc")
+craft_test("src/quorum/majority_test.cc")
+craft_test("src/quorum/joint_test.cc")

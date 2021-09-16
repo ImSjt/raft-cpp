@@ -1,5 +1,5 @@
-#ifndef __CRAFT_RAFT_READ_ONLY_H__
-#define __CRAFT_RAFT_READ_ONLY_H__
+#ifndef __CRAFT_READ_ONLY_H__
+#define __CRAFT_READ_ONLY_H__
 
 #include <cstdint>
 #include <string>
@@ -52,4 +52,4 @@ class ReadOnly : public noncopyable {
 
 } // namespace craft
 
-#endif // __CRAFT_RAFT_READ_ONLY_H__
+#endif // __CRAFT_READ_ONLY_H__

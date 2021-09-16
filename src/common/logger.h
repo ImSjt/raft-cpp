@@ -26,7 +26,7 @@ class Logger : public Singleton<Logger> {
     using Buffer = FixedBuffer<kSmallBuffer>;
 
     // log output callback
-    using LogOutputCb = std::function<void (const char* str, bool flush)>;
+    using LogOutputCb = std::function<void (const char* str, int32_t len, bool fatal)>;
     
     Logger();
 

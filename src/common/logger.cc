@@ -15,13 +15,13 @@ namespace craft {
 static const char* g_kLogLevel[Logger::kNumLogLevel] = {
     "TRACE",
     "DEBUG",
-    "INFO ",
-    "WARN ",
+    "INFO",
+    "WARN",
     "ERROR",
     "FATAL"
 };
 
-static void DefaultLogOutput(const char* str, bool flush);
+static void DefaultLogOutput(const char* str, int32_t len, bool fatal);
 
 Logger::Logger()
     :log_output_(DefaultLogOutput),
@@ -44,16 +44,13 @@ void Logger::Write(LogLevel level, const char* file, int32_t line, const char* f
     Buffer buffer;
     va_list vlist;
 
-    // format time
+   // format time、log level、file and line
     auto tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    // TODO: use std::chrono
     struct tm* t = localtime(&tt);
-    int32_t len = snprintf(buffer.Current(), buffer.Avail(), "%4d%02d%02d %02d:%02d:%02d",
+    int32_t len = snprintf(buffer.Current(), buffer.Avail(), "%4d%02d%02d %02d:%02d:%02d [%s] [%s:%d]: ",
                             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-                            t->tm_hour, t->tm_min, t->tm_sec);
-    buffer.Add(len);
-
-    // log level
-    len = snprintf(buffer.Current(), buffer.Avail(), " [%s]: ", g_kLogLevel[level]);
+                            t->tm_hour, t->tm_min, t->tm_sec, g_kLogLevel[level], file, line);
     buffer.Add(len);
 
     // log info
@@ -62,20 +59,18 @@ void Logger::Write(LogLevel level, const char* file, int32_t line, const char* f
     va_end(vlist);
     buffer.Add(len);
 
-    // file and line
-    len = snprintf(buffer.Current(), buffer.Avail(), " [%s:%d]\n", file, line);
-    buffer.Add(len);    
+    len = snprintf(buffer.Current(), buffer.Avail(), "\n");
+    buffer.Add(len);
 
-    if (level == kFatal) {
-        log_output_(buffer.Data(), false);
-        abort();
-    }
-
-    log_output_(buffer.Data(), true);
+    log_output_(buffer.Data(), buffer.Length(), (level==kFatal));
 }
 
-static void DefaultLogOutput(const char* str, bool flush) {
+static void DefaultLogOutput(const char* str, int32_t len, bool fatal) {
     std::cout << str;
+
+    if (fatal) {
+        abort();
+    }
 }
 
 } // namespace craft
