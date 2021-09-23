@@ -80,7 +80,7 @@ TEST_F(MajorityConfigTest, CommittedIndex) {
         craft::MajorityConfig majority_config(test.cfg_);
         craft::MapAckIndexer indexer(test.idx_);
 
-        uint64_t gindex = majority_config.CommittedIndex(&indexer);
+        uint64_t gindex = majority_config.CommittedIndex(indexer);
         EXPECT_EQ(gindex, test.windex_) << "#test case: " << test.name_;
     }
 }

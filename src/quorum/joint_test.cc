@@ -113,7 +113,7 @@ TEST_F(JointConfigTest, CommittedIndex) {
         craft::JointConfig joint_config(test.cfg_, test.cfgj_);
         craft::MapAckIndexer indexer(test.idx_);
 
-        uint64_t gindex = joint_config.CommittedIndex(&indexer);
+        uint64_t gindex = joint_config.CommittedIndex(indexer);
         EXPECT_EQ(gindex, test.windex_) << "#test case: " << test.name_;
     }
 }
@@ -179,5 +179,4 @@ TEST_F(JointConfigTest, VoteResult) {
         uint64_t gstate = joint_config.VoteResult(test.votes_);
         EXPECT_EQ(gstate, test.wstate_) << "#test case: " << test.name_;
     }
-
 }

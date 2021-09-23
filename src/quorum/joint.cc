@@ -2,13 +2,13 @@
 
 namespace craft {
 
-std::string JointConfig::String() {
-    if (!joint_config_[1].majority_config_.empty()) {
-        return joint_config_[0].String() + "&&" + joint_config_[1].String();
-    }
+// std::string JointConfig::String() {
+//     if (!joint_config_[1].majority_config_.empty()) {
+//         return joint_config_[0].String() + "&&" + joint_config_[1].String();
+//     }
 
-    return joint_config_[0].String();
-}
+//     return joint_config_[0].String();
+// }
 
 std::set<uint64_t> JointConfig::IDs() {
     std::set<uint64_t> m;
@@ -21,11 +21,11 @@ std::set<uint64_t> JointConfig::IDs() {
     return m;
 }
 
-std::string JointConfig::Describe(AckedIndexer* l) {
-    return MajorityConfig(IDs()).Describe(l);
-}
+// std::string JointConfig::Describe(AckedIndexer* l) {
+//     return MajorityConfig(IDs()).Describe(l);
+// }
 
-uint64_t JointConfig::CommittedIndex(AckedIndexer* l) {
+uint64_t JointConfig::CommittedIndex(AckedIndexer& l) {
     uint64_t idx0 = joint_config_[0].CommittedIndex(l);
     uint64_t idx1 = joint_config_[1].CommittedIndex(l);
     if (idx0 < idx1) {

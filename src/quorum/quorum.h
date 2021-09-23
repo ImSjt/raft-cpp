@@ -11,7 +11,6 @@ namespace craft {
 class AckedIndexer {
  public:
     virtual bool AckedIndex(uint64_t voter_id, uint64_t& idx) = 0;
-    virtual void RecordIndex(uint64_t voter_id, uint64_t idx) = 0;
 };
 
 class MapAckIndexer : public AckedIndexer {
@@ -28,10 +27,6 @@ class MapAckIndexer : public AckedIndexer {
 
         idx = it->second;
         return true;
-    }
-
-    virtual void RecordIndex(uint64_t voter_id, uint64_t idx) override {
-        map_ack_indexer_[voter_id] = idx;
     }
 
  private:

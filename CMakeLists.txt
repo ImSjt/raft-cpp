@@ -64,6 +64,12 @@ target_sources(craft
     "src/quorum/majority.h"
     "src/quorum/joint.cc"
     "src/quorum/joint.h"
+    "src/tracker/inflights.h"
+    "src/tracker/inflights.cc"
+    "src/tracker/progress.h"
+    "src/tracker/progress.cc"
+    "src/tracker/tracker.h"
+    "src/tracker/tracker.cc"
 
     # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
     $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -98,3 +104,5 @@ craft_test("src/log_unstable_test.cc")
 craft_test("src/log_test.cc")
 craft_test("src/quorum/majority_test.cc")
 craft_test("src/quorum/joint_test.cc")
+craft_test("src/tracker/inflights_test.cc")
+craft_test("src/tracker/progress_test.cc")

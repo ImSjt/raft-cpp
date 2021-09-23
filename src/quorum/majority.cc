@@ -4,102 +4,102 @@
 
 namespace craft {
 
-std::string MajorityConfig::String() {
-    std::vector<uint64_t> sl;
+// std::string MajorityConfig::String() {
+//     std::vector<uint64_t> sl;
 
-    for (uint64_t id : majority_config_) {
-        sl.push_back(id);
-    }
+//     for (uint64_t id : majority_config_) {
+//         sl.push_back(id);
+//     }
 
-    std::sort(sl.begin(), sl.end(), [] (uint64_t i, uint64_t j) {
-        return i < j;
-    });
+//     std::sort(sl.begin(), sl.end(), [] (uint64_t i, uint64_t j) {
+//         return i < j;
+//     });
 
-    std::string buf;
-    buf.push_back('(');
-    for (size_t i = 0; i < sl.size(); i++) {
-        if (i > 0) {
-            buf.push_back(' ');
-        }
-        buf.append(std::to_string(sl[i]));
-    }
-    buf.push_back(')');
+//     std::string buf;
+//     buf.push_back('(');
+//     for (size_t i = 0; i < sl.size(); i++) {
+//         if (i > 0) {
+//             buf.push_back(' ');
+//         }
+//         buf.append(std::to_string(sl[i]));
+//     }
+//     buf.push_back(')');
 
-    return buf;
-}
+//     return buf;
+// }
 
-std::string MajorityConfig::Describe(AckedIndexer* l) {
-    if (majority_config_.empty()) {
-        return "<empty majority quorum>";
-    }
+// std::string MajorityConfig::Describe(AckedIndexer* l) {
+//     if (majority_config_.empty()) {
+//         return "<empty majority quorum>";
+//     }
 
-    struct tup
-    {
-        tup(uint64_t id, uint64_t idx, bool ok) : id_(id), idx_(idx), ok_(ok), bar_(0) {}
-        uint64_t id_;
-        uint64_t idx_;
-        bool     ok_;  // idx found?
-        int      bar_; // length of bar displayed for this tup
-    };
+//     struct tup
+//     {
+//         tup(uint64_t id, uint64_t idx, bool ok) : id_(id), idx_(idx), ok_(ok), bar_(0) {}
+//         uint64_t id_;
+//         uint64_t idx_;
+//         bool     ok_;  // idx found?
+//         int      bar_; // length of bar displayed for this tup
+//     };
     
-	// Below, populate .bar so that the i-th largest commit index has bar i (we
-	// plot this as sort of a progress bar). The actual code is a bit more
-	// complicated and also makes sure that equal index => equal bar.
-    size_t n = majority_config_.size();
-    std::vector<tup> info;
+// 	// Below, populate .bar so that the i-th largest commit index has bar i (we
+// 	// plot this as sort of a progress bar). The actual code is a bit more
+// 	// complicated and also makes sure that equal index => equal bar.
+//     size_t n = majority_config_.size();
+//     std::vector<tup> info;
 
-    uint64_t index;
-    bool ok;
-    for (uint64_t id : majority_config_) {
-        ok = l->AckedIndex(id, index);
-        info.push_back(tup(id, index, ok));
-    }
+//     uint64_t index;
+//     bool ok;
+//     for (uint64_t id : majority_config_) {
+//         ok = l->AckedIndex(id, index);
+//         info.push_back(tup(id, index, ok));
+//     }
 
-    // Sort by index
-    std::sort(info.begin(), info.end(), [] (const tup& i, const tup& j) {
-        if (i.idx_ == j.idx_) {
-            return i.id_ < j.id_;
-        }
+//     // Sort by index
+//     std::sort(info.begin(), info.end(), [] (const tup& i, const tup& j) {
+//         if (i.idx_ == j.idx_) {
+//             return i.id_ < j.id_;
+//         }
 
-        return i.idx_ < j.idx_;
-    });
+//         return i.idx_ < j.idx_;
+//     });
 
-    // Populate .bar.
-    for (size_t i = 0; i < info.size(); i++) {
-        if (i > 0 && info[i-1].idx_ < info[i].idx_) {
-            info[i].bar_ = i;
-        }
-    }
+//     // Populate .bar.
+//     for (size_t i = 0; i < info.size(); i++) {
+//         if (i > 0 && info[i-1].idx_ < info[i].idx_) {
+//             info[i].bar_ = i;
+//         }
+//     }
 
-    // Sort by ID.
-    std::sort(info.begin(), info.end(), [] (const tup& i, const tup& j) {
-        return i.idx_ < j.idx_;
-    });
+//     // Sort by ID.
+//     std::sort(info.begin(), info.end(), [] (const tup& i, const tup& j) {
+//         return i.idx_ < j.idx_;
+//     });
 
-    // Print
-    std::string buf;
-    char tmp_buf[1024];
-    int len;
+//     // Print
+//     std::string buf;
+//     char tmp_buf[1024];
+//     int len;
 
-    buf.append(n, ' ');
-    buf.append("    idx\n");
-    for (tup& t : info) {
-        int bar = t.bar_;
-        if (!t.ok_) {
-            buf.append("?");
-            buf.append(n, ' ');
-        } else {
-            buf.append(bar, 'x');
-            buf.append(">");
-            buf.append(n-bar, ' ');
-        }
+//     buf.append(n, ' ');
+//     buf.append("    idx\n");
+//     for (tup& t : info) {
+//         int bar = t.bar_;
+//         if (!t.ok_) {
+//             buf.append("?");
+//             buf.append(n, ' ');
+//         } else {
+//             buf.append(bar, 'x');
+//             buf.append(">");
+//             buf.append(n-bar, ' ');
+//         }
         
-        len = snprintf(tmp_buf, sizeof(tmp_buf), " %5d    (id=%d)\n", t.idx_, t.id_);
-        buf.append(tmp_buf, len);
-    }
+//         len = snprintf(tmp_buf, sizeof(tmp_buf), " %5d    (id=%d)\n", t.idx_, t.id_);
+//         buf.append(tmp_buf, len);
+//     }
 
-    return buf;
-}
+//     return buf;
+// }
 
 std::vector<uint64_t> MajorityConfig::Slice() {
     std::vector<uint64_t> sl;
@@ -121,7 +121,7 @@ static void insertionSort(uint64_t* arr, size_t n) {
     }
 }
 
-uint64_t MajorityConfig::CommittedIndex(AckedIndexer* l) {
+uint64_t MajorityConfig::CommittedIndex(AckedIndexer& l) {
     size_t n = majority_config_.size();
     if (n == 0) {
 		// This plays well with joint quorums which, when one half is the zero
@@ -138,7 +138,7 @@ uint64_t MajorityConfig::CommittedIndex(AckedIndexer* l) {
 	// implications of an allocation here are far from drastic).
     uint64_t stk[7] = {0};
     uint64_t* srt = nullptr;
-    if (sizeof(stk) >= n) {
+    if (sizeof(stk) / sizeof(stk[0]) >= n) {
         srt = stk;
     } else {
         srt = new uint64_t[n]();
@@ -153,7 +153,7 @@ uint64_t MajorityConfig::CommittedIndex(AckedIndexer* l) {
         for (uint64_t id : majority_config_) {
             uint64_t idx;
             bool ok;
-            ok = l->AckedIndex(id, idx);
+            ok = l.AckedIndex(id, idx);
             if (ok) {
                 srt[i] = idx;
                 i--;
@@ -168,7 +168,7 @@ uint64_t MajorityConfig::CommittedIndex(AckedIndexer* l) {
     size_t pos = n - (n/2 + 1);
     uint64_t index = srt[pos];
 
-    if (sizeof(stk) < n) {
+    if (sizeof(stk) / sizeof(stk[0]) < n) {
         delete[] srt;
     }
 
