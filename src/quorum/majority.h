@@ -1,11 +1,25 @@
-#ifndef __CRAFT_QUORUM_MAJORITY_H__
-#define __CRAFT_QUORUM_MAJORITY_H__
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#pragma once
 
 #include <cstdint>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
-#include <map>
 
 #include "quorum/quorum.h"
 
@@ -16,43 +30,37 @@ class JointConfig;
 // MajorityConfig is a set of IDs that uses majority quorums to make decisions.
 class MajorityConfig {
  public:
-    MajorityConfig() = default;
-    MajorityConfig(const std::set<uint64_t>& c) : majority_config_(c) {}
-    MajorityConfig(std::set<uint64_t>&& c) : majority_config_(std::forward<std::set<uint64_t>>(c)) {}
+  MajorityConfig() = default;
+  MajorityConfig(const std::set<uint64_t> &c) : config_(c) {}
+  MajorityConfig(std::set<uint64_t> &&c) : config_(std::move(c)) {}
 
-    //  std::string String();
+  size_t Size() const { return config_.size(); }
 
-    // Describe returns a (multi-line) representation of the commit indexes for the
-    // given lookuper.
-    //  std::string Describe(AckedIndexer* l);
+  // Slice returns the MajorityConfig as a sorted slice.
+  std::vector<uint64_t> Slice() const;
 
-    size_t Size() {
-        return majority_config_.size();
-    }
+  // CommittedIndex computes the committed index from those supplied via the
+  // provided AckedIndexer (for the active config).
+  Index CommittedIndex(const AckedIndexer& l) const;
+  // uint64_t CommittedIndex(AckedIndexer &&l) { return CommittedIndex(l); }
 
-    // Slice returns the MajorityConfig as a sorted slice.
-    std::vector<uint64_t> Slice();
+  // VoteResult takes a mapping of voters to yes/no (true/false) votes and
+  // returns a result indicating whether the vote is pending (i.e. neither a
+  // quorum of yes/no has been reached), won (a quorum of yes has been reached),
+  // or lost (a quorum of no has been reached).
+  VoteState VoteResult(const std::map<uint64_t, bool>& votes) const;
 
-    // CommittedIndex computes the committed index from those supplied via the
-    // provided AckedIndexer (for the active config).
-    uint64_t CommittedIndex(AckedIndexer& l);
-    uint64_t CommittedIndex(AckedIndexer&& l) {
-        return CommittedIndex(l);
-    }
+  void IDs(std::set<uint64_t>& ids) const;
 
-    // VoteResult takes a mapping of voters to yes/no (true/false) votes and returns
-    // a result indicating whether the vote is pending (i.e. neither a quorum of
-    // yes/no has been reached), won (a quorum of yes has been reached), or lost (a
-    // quorum of no has been reached).
-    VoteState VoteResult(const std::map<uint64_t, bool>& votes);
+  std::string String() const;
+  // Describe returns a (multi-line) representation of the commit indexes for the
+  // given lookuper.
+  std::string Describe(const AckedIndexer& l) const;
 
  private:
-    friend class JointConfig;
-    // The node set of the current configuration
-    std::set<uint64_t> majority_config_;
-
+  friend class JointConfig;
+  // The node set of the current configuration
+  std::set<uint64_t> config_;
 };
 
-} // namespace craft
-
-#endif // __CRAFT_QUORUM_MAJORITY_H__
+}  // namespace craft

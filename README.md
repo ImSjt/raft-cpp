@@ -13,3 +13,16 @@ git config -f .gitmodules submodule.liba.branch dev
 git submodule update --remote
 
 git submodule rm xxx
+
+
+TODO
+- glog // done
+- quorum // done
+- google fmt
+- tracker
+- confchange
+- storage
+- unstable
+- raftlog
+- raft
+- readonly

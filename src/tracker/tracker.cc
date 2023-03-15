@@ -1,3 +1,18 @@
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "tracker/tracker.h"
 
 #include "quorum/quorum.h"
@@ -6,134 +21,127 @@ namespace craft {
 
 class MatchAckIndexer : public AckedIndexer {
  public:
-    MatchAckIndexer(const std::map<uint64_t, std::shared_ptr<Progress>>& m) : progress_map_(m) {}
-    MatchAckIndexer(std::map<uint64_t, std::shared_ptr<Progress>>&& m) : progress_map_(m) {}
+  MatchAckIndexer(const ProgressMap* m)
+      : progress_map_(m) {}
 
-    virtual bool AckedIndex(uint64_t voter_id, uint64_t& idx) override {
-        auto it = progress_map_.find(voter_id);
-        if (it == progress_map_.end()) {
-            idx = 0;
-            return false;
-        }
-
-        idx = it->second->Match();
-        return true;
+  std::tuple<Index, bool> AckedIndex(uint64_t voter_id) const {
+    auto it = progress_map_->find(voter_id);
+    if (it == progress_map_->end()) {
+      return std::make_tuple(static_cast<Index>(0), false);
     }
+    return std::make_tuple(static_cast<Index>(it->second->Match()), true);
+  }
 
  private:
-    std::map<uint64_t, std::shared_ptr<Progress>> progress_map_;
+  const ProgressMap* progress_map_;
 };
 
 raftpb::ConfState ProgressTracker::ConfState() {
-    raftpb::ConfState conf_state;
-    
-    std::vector<uint64_t> voters = config_.voters_.At(0).Slice();
-    for (uint64_t voter : voters) {
-        conf_state.add_voters(voter);
-    }
+  raftpb::ConfState conf_state;
 
-    std::vector<uint64_t> voters_outgoing = config_.voters_.At(1).Slice();
-    for (uint64_t voter : voters_outgoing) {
-        conf_state.add_voters_outgoing(voter);
-    }
+  std::vector<uint64_t> voters = config_.voters_.At(0).Slice();
+  for (uint64_t voter : voters) {
+    conf_state.add_voters(voter);
+  }
 
-    for (uint64_t learner : config_.learners_) {
-        conf_state.add_learners(learner);
-    }
+  std::vector<uint64_t> voters_outgoing = config_.voters_.At(1).Slice();
+  for (uint64_t voter : voters_outgoing) {
+    conf_state.add_voters_outgoing(voter);
+  }
 
-    for (uint64_t learner : config_.learners_next_) {
-        conf_state.add_learners_next(learner);
-    }
+  for (uint64_t learner : config_.learners_) {
+    conf_state.add_learners(learner);
+  }
 
-    conf_state.set_auto_leave(config_.auto_leave_);
+  for (uint64_t learner : config_.learners_next_) {
+    conf_state.add_learners_next(learner);
+  }
 
-    return conf_state;
+  conf_state.set_auto_leave(config_.auto_leave_);
+
+  return conf_state;
 }
 
-uint64_t ProgressTracker::Committed() {
-    return config_.voters_.CommittedIndex(MatchAckIndexer(progress_));
+uint64_t ProgressTracker::Committed() const {
+  return config_.voters_.CommittedIndex(MatchAckIndexer(&progress_));
 }
 
 void ProgressTracker::Visit(Closure&& func) {
-    for (const auto& p : progress_) {
-        func(p.first, p.second);
-    }
+  for (const auto& p : progress_) {
+    func(p.first, p.second);
+  }
 }
 
 bool ProgressTracker::QuorumActive() {
-    std::map<uint64_t, bool> votes;
-    Visit([&](uint64_t id, std::shared_ptr<Progress> pr) {
-        if (pr->IsLearner()) {
-            return;
-        }
-        votes[id] = pr->RecentActive();
-    });
+  std::map<uint64_t, bool> votes;
+  Visit([&votes](uint64_t id, std::shared_ptr<Progress> pr) {
+    if (pr->IsLearner()) {
+      return;
+    }
+    votes[id] = pr->RecentActive();
+  });
 
-    return config_.voters_.VoteResult(votes) == kVoteWon;
+  return config_.voters_.VoteResult(votes) == kVoteWon;
 }
 
 std::vector<uint64_t> ProgressTracker::VoterNodes() {
-    std::set<uint64_t> m = config_.voters_.IDs();
-    std::vector<uint64_t> nodes;
-    for (uint64_t n : m) {
-        nodes.push_back(n);
-    }
-
-    return nodes;
+  std::set<uint64_t> m = config_.voters_.IDs();
+  std::vector<uint64_t> nodes;
+  for (uint64_t n : m) {
+    nodes.push_back(n);
+  }
+  return nodes;
 }
 
 std::vector<uint64_t> ProgressTracker::LearnerNodes() {
-    if (config_.learners_.empty()) {
-        return {};
-    }
+  if (config_.learners_.empty()) {
+    return {};
+  }
 
-    std::vector<uint64_t> nodes;
-    for (uint64_t n : config_.learners_) {
-        nodes.push_back(n);
-    }
-    
-    return nodes;
+  std::vector<uint64_t> nodes;
+  for (uint64_t n : config_.learners_) {
+    nodes.push_back(n);
+  }
+  return nodes;
 }
 
 void ProgressTracker::RecordVote(uint64_t id, bool v) {
-    auto it = votes_.find(id);
-    if (it == votes_.end()) {
-        votes_[id] = v;
-    }
+  auto it = votes_.find(id);
+  if (it == votes_.end()) {
+    votes_[id] = v;
+  }
 }
 
-VoteState ProgressTracker::TallyVotes(int32_t& granted, int32_t& rejected) {
-	// Make sure to populate granted/rejected correctly even if the Votes slice
-	// contains members no longer part of the configuration. This doesn't really
-	// matter in the way the numbers are used (they're informational), but might
-	// as well get it right.
-    granted = 0;
-    rejected = 0;
-    for (const auto& p : progress_) {
-        if (p.second->IsLearner()) {
-            continue;
-        }
-        auto v = votes_.find(p.first);
-        if (v == votes_.end()) {
-            continue;
-        }
-        if (v->second) {
-            granted++;
-        } else {
-            rejected++;
-        }
+std::tuple<int32_t, int32_t, VoteState> ProgressTracker::TallyVotes() const {
+  // Make sure to populate granted/rejected correctly even if the Votes slice
+  // contains members no longer part of the configuration. This doesn't really
+  // matter in the way the numbers are used (they're informational), but might
+  // as well get it right.
+  int32_t granted = 0;
+  int32_t rejected = 0;
+  for (const auto& p : progress_) {
+    if (p.second->IsLearner()) {
+      continue;
     }
-
-    return config_.voters_.VoteResult(votes_);
+    auto v = votes_.find(p.first);
+    if (v == votes_.end()) {
+      continue;
+    }
+    if (v->second) {
+      granted++;
+    } else {
+      rejected++;
+    }
+  }
+  return std::make_tuple(granted, rejected, config_.voters_.VoteResult(votes_));
 }
 
 std::shared_ptr<Progress> ProgressTracker::GetProgress(uint64_t id) {
-    auto it = progress_.find(id);
-    if (it == progress_.end()) {
-        return std::make_shared<Progress>();
-    }
-
-    return it->second;
+  auto it = progress_.find(id);
+  if (it == progress_.end()) {
+    return std::shared_ptr<Progress>();
+  }
+  return it->second;
 }
 
-} // namespace craft
+}  // namespace craft

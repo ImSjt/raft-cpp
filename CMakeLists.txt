@@ -1,15 +1,24 @@
-cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
+project(raft-cpp)
+set(PROJECT_VERSION, 1)
+set(PROJECT_VERSION_MAJOR, 0)
+set(PROJECT_VERSION_MINOR, 0)
 
-project(raft-cpp VERSION 1.0)
-
-# enable c++ 11
-set(CMAKE_CXX_STANDARD 11)
+# enable c++ 17
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CRAFT_PUBLIC_INCLUDE_DIR "include/craft")
 
 add_subdirectory(third_party/googletest)
 enable_testing()
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(WITH_GFLAGS OFF CACHE BOOL "" FORCE)
+set(WITH_GTEST OFF CACHE BOOL "" FORCE)
+set(WITH_UNWIND OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/glog)
+include_directories(${CMAKE_SOURCE_DIR}/src/thirdparty/glog/src)
 
 include(FindProtobuf)
 find_package(Protobuf REQUIRED)
@@ -81,6 +90,7 @@ target_sources(craft
     "${CRAFT_PUBLIC_INCLUDE_DIR}/log.h"
 )
 target_link_libraries(craft "${EXTRA_LIBS}")
+target_link_libraries (craft glog::glog)
 
 # add_executable(test_bug "src/raft/main.cc")
 # target_link_libraries(test_bug craft)

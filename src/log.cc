@@ -165,6 +165,7 @@ Status RaftLog::Term(uint64_t i, uint64_t& term) const {
     }
 
     LOG_FATAL("unexpected error: %s", status.Str());
+    return status;
 }
 
 Status RaftLog::Entries(uint64_t i, uint64_t maxsize, std::vector<raftpb::Entry>& ents) const {
