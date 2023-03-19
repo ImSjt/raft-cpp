@@ -19,7 +19,7 @@ TODO
 - glog // done
 - quorum // done
 - google fmt
-- tracker
+- tracker // done
 - confchange
 - storage
 - unstable

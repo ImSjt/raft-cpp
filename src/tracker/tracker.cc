@@ -36,6 +36,22 @@ class MatchAckIndexer : public AckedIndexer {
   const ProgressMap* progress_map_;
 };
 
+ProgressPtr GetProgress(ProgressMap& prs, uint64_t id) {
+  auto it = prs.find(id);
+  if (it == prs.end()) {
+    return std::shared_ptr<Progress>();
+  }
+  return it->second;
+}
+
+const ProgressPtr GetProgress(const ProgressMap& prs, uint64_t id) {
+  auto it = prs.find(id);
+  if (it == prs.end()) {
+    return std::shared_ptr<Progress>();
+  }
+  return it->second;
+}
+
 raftpb::ConfState ProgressTracker::ConfState() {
   raftpb::ConfState conf_state;
 
@@ -137,11 +153,7 @@ std::tuple<int32_t, int32_t, VoteState> ProgressTracker::TallyVotes() const {
 }
 
 std::shared_ptr<Progress> ProgressTracker::GetProgress(uint64_t id) {
-  auto it = progress_.find(id);
-  if (it == progress_.end()) {
-    return std::shared_ptr<Progress>();
-  }
-  return it->second;
+  return craft::GetProgress(progress_, id);
 }
 
 }  // namespace craft

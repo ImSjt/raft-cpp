@@ -29,6 +29,9 @@ namespace craft {
 
 using ProgressMap = std::map<uint64_t, ProgressPtr>;
 
+ProgressPtr GetProgress(ProgressMap& prs, uint64_t id);
+const ProgressPtr GetProgress(const ProgressMap& prs, uint64_t id);
+
 // ProgressTracker tracks the currently active configuration and the information
 // known about the nodes and learners in it. In particular, it tracks the match
 // index for each peer which in turn allows reasoning about the committed index.
@@ -86,11 +89,14 @@ class ProgressTracker {
     // right away when entering the joint configuration, so that it is caught up
     // as soon as possible.
     std::set<uint64_t> learners_next_;
+
+    bool Joint() const { return voters_.Outgoing().Size() > 0; }
+    std::string Describe() const { return ""; }
   };
 
   using Closure = std::function<void(uint64_t id, ProgressPtr pr)>;
 
-  ProgressTracker(int32_t max_inflight) : max_inflight_(max_inflight) {}
+  ProgressTracker(int64_t max_inflight) : max_inflight_(max_inflight) {}
 
   // ConfState returns a ConfState representing the active configuration.
   raftpb::ConfState ConfState();
@@ -131,15 +137,20 @@ class ProgressTracker {
   // the election outcome is known.
   std::tuple<int32_t, int32_t, VoteState> TallyVotes() const;
 
+  const Config& GetConfig() const { return config_; }
+  const ProgressMap& GetProgressMap() const { return progress_; }
+  ProgressPtr GetProgress(uint64_t id);
 
-  Config& GetConfig() { return config_; }
-  std::shared_ptr<Progress> GetProgress(uint64_t id);
+  void SetConfig(Config&& config) { config_ = std::move(config); }
+  void SetProgressMap(ProgressMap&& progress) { progress_ = std::move(progress); }
+
+  int64_t MaxInflight() const { return max_inflight_; }
 
  private:
   Config config_;
   ProgressMap progress_;
   std::map<uint64_t, bool> votes_;
-  int32_t max_inflight_;
+  int64_t max_inflight_;
 };
 
 }  // namespace craft

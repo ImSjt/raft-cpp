@@ -28,7 +28,7 @@ namespace craft {
 // ack is received.
 class Inflights {
  public:
-  Inflights(int32_t size) : start_(0), count_(0), size_(size) {}
+  Inflights(int64_t size) : start_(0), count_(0), size_(size) {}
 
   // Clone returns an *Inflights that is identical to but shares no memory with
   // the receiver.

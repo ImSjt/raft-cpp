@@ -21,14 +21,15 @@
 
 namespace craft {
 
-Progress::Progress()
-    : match_(0),
-      next_(0),
-      state_(kStateProbe),
-      pending_snapshot_(0),
-      recent_active_(false),
-      probe_sent_(false),
-      is_learner_(false) {}
+Progress::Progress(uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active)
+  : match_(match),
+    next_(next),
+    state_(kStateProbe),
+    pending_snapshot_(0),
+    recent_active_(active),
+    probe_sent_(false),
+    inflights_(std::make_unique<Inflights>(max_inflight)),
+    is_learner_(is_learner) {}
 
 void Progress::ResetState(StateType state) {
   probe_sent_ = false;

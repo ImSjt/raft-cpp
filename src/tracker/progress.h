@@ -32,7 +32,7 @@ namespace craft {
 // certain State. All of this isn't ideal.
 class Progress {
  public:
-  Progress();
+  Progress(uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active);
 
   // ResetState moves the Progress into the specified State, resetting
   // ProbeSent, PendingSnapshot, and Inflights.
@@ -93,6 +93,7 @@ class Progress {
   bool RecentActive() const { return recent_active_; }
   bool ProbeSent() const { return probe_sent_; }
   bool IsLearner() const { return is_learner_; }
+  void SetIsLearner(bool v) { is_learner_ = v; }
 
   std::string String() const;
 

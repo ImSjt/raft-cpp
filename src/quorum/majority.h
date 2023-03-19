@@ -36,6 +36,16 @@ class MajorityConfig {
 
   size_t Size() const { return config_.size(); }
 
+  void Reset() { config_.clear(); }
+
+  bool Exist(uint64_t id) const { return config_.count(id) != 0; }
+
+  void Add(uint64_t id) { config_.insert(id); }
+
+  void Remove(uint64_t id) { config_.erase(id); }
+
+  const std::set<uint64_t>& IDs() const { return config_; }
+
   // Slice returns the MajorityConfig as a sorted slice.
   std::vector<uint64_t> Slice() const;
 

@@ -68,6 +68,11 @@ class JointConfig {
     return MajorityConfig(IDs()).Describe(l);
   }
 
+  MajorityConfig& Incoming() { return configs_[0]; }
+  MajorityConfig& Outgoing() { return configs_[1]; }
+  const MajorityConfig& Incoming() const { return configs_[0]; }
+  const MajorityConfig& Outgoing() const { return configs_[1]; }
+
  private:
   MajorityConfig configs_[2];
 };
