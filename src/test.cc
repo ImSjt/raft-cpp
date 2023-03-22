@@ -1,23 +1,22 @@
 #include <iostream>
 #include <memory>
+#include <vector>
 
-class Test
-{
-public:
-    Test() {
-        std::cout << "begin" << std::endl;
-    }
-
-    ~Test() {
-        std::cout << "end" << std::endl;
-    }
+struct T {
+    int a;
 };
 
-int main(int argc, char* argv[])
-{
-    std::unique_ptr<Test> p(new Test);
+using TPtr = std::shared_ptr<T>;
 
-    p = nullptr;
+int test(const TPtr& p) {
+    p->a = 2;
+    return 0;
+}
 
-    p.reset(new Test);
+int main(int argc, char* argv[]) {
+    auto p = std::make_shared<T>();
+    test(p);
+    p.get();
+    std::cout << p->a << std::endl;
+    return 0;
 }

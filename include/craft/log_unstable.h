@@ -1,54 +1,82 @@
-#ifndef __CRAFT_LOG_UNSTABLE_H__
-#define __CRAFT_LOG_UNSTABLE_H__
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#pragma once
 
 #include <memory>
 #include <vector>
 
+#include "craft/define.h"
 #include "craft/raft.pb.h"
-#include "craft/noncopyable.h"
 #include "craft/status.h"
 
 class RaftLog;
 namespace craft {
+
 // unstable.entries[i] has raft log position i+unstable.offset.
 // Note that unstable.offset may be less than the highest log
 // position in storage; this means that the next write to storage
 // might need to truncate the log before persisting unstable.entries.
-class Unstable : public noncopyable {
+class Unstable {
  public:
-    Unstable() : offset_(0) {}
-    // maybeFirstIndex returns the index of the first possible entry in entries
-    // if it has a snapshot.
-    uint64_t MaybeFirstIndex() const;
-    // maybeLastIndex returns the last index if it has at least one
-    // unstable entry or snapshot.
-    uint64_t MaybeLastIndex() const;
-    // maybeTerm returns the term of the entry at index i, if there
-    // is any.
-    uint64_t MaybeTerm(uint64_t i) const;
+  Unstable() : offset_(0) {}
 
-    void StableTo(uint64_t i, uint64_t t);
+  // MaybeFirstIndex returns the index of the first possible entry in entries
+  // if it has a snapshot.
+  std::tuple<uint64_t, bool> MaybeFirstIndex() const;
 
-    void StableSnapTo(uint64_t i);
+  // MaybeLastIndex returns the last index if it has at least one
+  // unstable entry or snapshot.
+  std::tuple<uint64_t, bool> MaybeLastIndex() const;
 
-    void Restore(const raftpb::Snapshot& snapshot);
+  // MaybeTerm returns the term of the entry at index i, if there
+  // is any.
+  std::tuple<uint64_t, bool> MaybeTerm(uint64_t i) const;
 
-    void TruncateAndAppend(const std::vector<raftpb::Entry>& ents);
+  void StableTo(uint64_t i, uint64_t t);
 
-    void Slice(uint64_t lo, uint64_t hi, std::vector<raftpb::Entry>& ents) const;
+  void StableSnapTo(uint64_t i);
+
+  void Restore(SnapshotPtr snapshot);
+
+  void TruncateAndAppend(const EntryPtrs& ents);
+
+  EntryPtrs Slice(uint64_t lo, uint64_t hi) const;
+
+  const EntryPtrs& Entries() const { return entries_; }
+
+  SnapshotPtr Snapshot() const { return snapshot_; }
+
+  uint64_t Offset() const { return offset_; }
 
  private:
-    void ShrikEntriesArray();
+  // shrinkEntriesArray discards the underlying array used by the entries slice
+  // if most of it isn't being used. This avoids holding references to a bunch of
+  // potentially large entries that aren't needed anymore. Simply clearing the
+  // entries wouldn't be safe because clients might still be using them.
+  void ShrikEntriesArray();
 
-    void MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const;
+  // u.offset <= lo <= hi <= u.offset+len(u.entries)
+  void MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const;
 
- private:
-    friend class RaftLog;
-    std::unique_ptr<raftpb::Snapshot> snapshot_;
-    std::vector<raftpb::Entry> entries_;
-    uint64_t offset_;
+  friend class RaftLog;
+  // the incoming unstable snapshot, if any.
+  SnapshotPtr snapshot_;
+  // all entries that have not yet been written to storage.
+  EntryPtrs entries_;
+  uint64_t offset_;
 };
 
-} // namespace craft
-
-#endif // __CRAFT_RAFT_LOG_UNSTABLE_H__
+}  // namespace craft

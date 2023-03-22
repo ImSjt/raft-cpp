@@ -43,6 +43,7 @@ class Status {
   static char* CopyState(char* dst, const char* src);
 
  private:
+  // TODO(JT): error code
   char* state_;
   static const int32_t kStateMaxSize = 1024;
 };

@@ -13,17 +13,15 @@
 // limitations under the License.
 #pragma once
 
-#include <cstdint>
-#include <vector>
+#include <memory>
 
-#include "craft/define.h"
 #include "craft/raft.pb.h"
 
 namespace craft {
 
-class Util {
- public:
-  static EntryPtrs LimitSize(EntryPtrs&& ents, uint64_t max_size);
-};
+using EntryPtr = std::shared_ptr<raftpb::Entry>;
+using EntryPtrs = std::vector<EntryPtr>;
+
+using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;
 
 }  // namespace craft

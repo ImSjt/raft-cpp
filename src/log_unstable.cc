@@ -1,118 +1,135 @@
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "craft/log_unstable.h"
 
 #include "common/logger.h"
 
 namespace craft {
 
-uint64_t Unstable::MaybeFirstIndex() const {
-    if (snapshot_ != nullptr) {
-        return snapshot_->metadata().index() + 1;
-    }
-
-    return 0;
+std::tuple<uint64_t, bool> Unstable::MaybeFirstIndex() const {
+  if (snapshot_ != nullptr) {
+    return std::make_tuple(snapshot_->metadata().index() + 1, true);
+  }
+  return std::make_tuple(0, false);
 }
 
-uint64_t Unstable::MaybeLastIndex() const {
-    if (!entries_.empty()) {
-        return offset_ + static_cast<uint64_t>(entries_.size()) - 1;
-    }
+std::tuple<uint64_t, bool> Unstable::MaybeLastIndex() const {
+  if (!entries_.empty()) {
+    return std::make_tuple(offset_ + static_cast<uint64_t>(entries_.size()) - 1, true);
+  }
 
-    if (snapshot_ != nullptr) {
-        return snapshot_->metadata().index();
-    }
-
-    return 0;
+  if (snapshot_ != nullptr) {
+    return std::make_tuple(snapshot_->metadata().index(), true);
+  }
+  return std::make_tuple(0, false);
 }
 
-uint64_t Unstable::MaybeTerm(uint64_t i) const {
-    if (i < offset_) {
-        if (snapshot_ != nullptr && snapshot_->metadata().index() == i) {
-            return snapshot_->metadata().term();
-        }
-
-        return 0;
+std::tuple<uint64_t, bool> Unstable::MaybeTerm(uint64_t i) const {
+  if (i < offset_) {
+    if (snapshot_ != nullptr && snapshot_->metadata().index() == i) {
+      return std::make_tuple(snapshot_->metadata().term(), true);
     }
+    return std::make_tuple(0, false);
+  }
 
-    uint64_t last = MaybeLastIndex();
-    if (last == 0) {
-        return 0;
-    }
+  auto [last, ok] = MaybeLastIndex();
+  if (!ok) {
+    return std::make_tuple(0, false);
+  }
+  if (i > last) {
+    return std::make_tuple(0, false);
+  }
 
-    if (i > last) {
-        return 0;
-    }
-
-    return entries_[i-offset_].term();
+  return std::make_tuple(entries_[i - offset_]->term(), true);
 }
 
 void Unstable::StableTo(uint64_t i, uint64_t t) {
-    uint64_t gt = MaybeTerm(i);
-    if (gt == 0) {
-        return;
-    }
+  auto [gt, ok] = MaybeTerm(i);
+  if (!ok) {
+    return;
+  }
 
-    // if i < offset, term is matched with the snapshot
-	// only update the unstable entries if term is matched with
-	// an unstable entry.
-    if (gt == t && i >= offset_) {
-        entries_.erase(entries_.begin(), entries_.begin()+(i-offset_+1));
-        offset_ = i + 1;
-        ShrikEntriesArray();
-    }
+  // if i < offset, term is matched with the snapshot
+  // only update the unstable entries if term is matched with
+  // an unstable entry.
+  if (gt == t && i >= offset_) {
+    entries_.erase(entries_.begin(), entries_.begin() + (i - offset_ + 1));
+    offset_ = i + 1;
+    ShrikEntriesArray();
+  }
 }
 
 void Unstable::StableSnapTo(uint64_t i) {
-    if (snapshot_ != nullptr && snapshot_->metadata().index() == i) {
-        snapshot_ = nullptr;
-    }
+  if (snapshot_ != nullptr && snapshot_->metadata().index() == i) {
+    snapshot_ = nullptr;
+  }
 }
 
-void Unstable::Restore(const raftpb::Snapshot& snapshot) {
-    offset_ = snapshot.metadata().index() + 1;
-    entries_.clear();
-    snapshot_.reset(new raftpb::Snapshot(snapshot));
+void Unstable::Restore(SnapshotPtr snapshot) {
+  offset_ = snapshot->metadata().index() + 1;
+  entries_.clear();
+  snapshot = snapshot;
 }
 
-void Unstable::TruncateAndAppend(const std::vector<raftpb::Entry>& ents) {
-    assert(!ents.empty());
-    uint64_t after = ents[0].index();
-    if (after == offset_+entries_.size()) {
-        // after is the next index in the u.entries
-		// directly append
-        entries_.insert(entries_.end(), ents.begin(), ents.end());
-    } else if (after <= offset_) {
-        LOG_INFO("replace the unstable entries from index %d", after);
-        // The log is being truncated to before our current offset
-		// portion, so set the offset and replace the entries
-        offset_ = after;
-        entries_ = ents;
-    } else {
-        // truncate to after and copy to u.entries
-		// then append
-        MustCheckOutOfBounds(offset_, after);
-        entries_.erase(entries_.begin()+(after-offset_), entries_.end());
-        entries_.insert(entries_.end(), ents.begin(), ents.end());
-    }
+void Unstable::TruncateAndAppend(const EntryPtrs& ents) {
+  uint64_t after = ents[0]->index();
+  if (after == offset_ + entries_.size()) {
+    // after is the next index in the u.entries
+    // directly append
+    entries_.insert(entries_.end(), ents.begin(), ents.end());
+  } else if (after <= offset_) {
+    LOG_INFO("replace the unstable entries from index %d", after);
+    // The log is being truncated to before our current offset
+    // portion, so set the offset and replace the entries
+    offset_ = after;
+    entries_ = ents;
+  } else {
+    // truncate to after and copy to u.entries
+    // then append
+    // MustCheckOutOfBounds(offset_, after);
+    entries_.erase(entries_.begin() + (after - offset_), entries_.end());
+    entries_.insert(entries_.end(), ents.begin(), ents.end());
+  }
 }
 
-void Unstable::Slice(uint64_t lo, uint64_t hi, std::vector<raftpb::Entry>& ents) const {
-    MustCheckOutOfBounds(lo, hi);
-    ents.insert(ents.end(), entries_.begin()+(lo-offset_), entries_.begin()+(hi-offset_));
+EntryPtrs Unstable::Slice(uint64_t lo, uint64_t hi) const {
+  MustCheckOutOfBounds(lo, hi);
+  std::vector<std::shared_ptr<raftpb::Entry>> ents;
+  ents.insert(ents.end(), entries_.begin() + (lo - offset_),
+              entries_.begin() + (hi - offset_));
+  return ents;
 }
 
-void Unstable::ShrikEntriesArray() {
-    entries_.shrink_to_fit();
-}
+void Unstable::ShrikEntriesArray() { entries_.shrink_to_fit(); }
 
 void Unstable::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
-    if (lo > hi) {
-        LOG_FATAL("invalid unstable.slice %d > %d", lo, hi);
-    }
+  // assert(lo <= hi);
+  // uint64_t upper = offset_ + static_cast<uint64_t>(entries_.size());
+  // assert(lo >= offset_);
+  // assert(hi <= upper);
 
-    uint64_t upper = offset_ + static_cast<uint64_t>(entries_.size());
-    if (lo < offset_ || hi > upper) {
-        LOG_FATAL("unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, offset_, upper);
-    }
+  if (lo > hi) {
+    LOG_FATAL("invalid unstable.slice %d > %d", lo, hi);
+  }
+
+  uint64_t upper = offset_ + static_cast<uint64_t>(entries_.size());
+  if (lo < offset_ || hi > upper) {
+    LOG_FATAL("unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, offset_,
+              upper);
+  }
 }
 
-} // namespace craft
+}  // namespace craft
