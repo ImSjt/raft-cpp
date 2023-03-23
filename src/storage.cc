@@ -13,13 +13,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "craft/storage.h"
+#include "storage.h"
 
 #include <algorithm>
 #include <cassert>
 
-#include "common/logger.h"
-#include "common/util.h"
+#include "logger.h"
+#include "util.h"
 
 namespace craft {
 
@@ -94,12 +94,12 @@ std::tuple<uint64_t, Status> MemoryStorage::Term(uint64_t i) {
 
 std::tuple<uint64_t, Status> MemoryStorage::LastIndex() {
   std::shared_lock<std::shared_mutex> guard(mutex_);
-  return LastIndexUnSafe();
+  return std::make_tuple(LastIndexUnSafe(), Status::OK());
 }
 
 std::tuple<uint64_t, Status> MemoryStorage::FirstIndex() {
   std::shared_lock<std::shared_mutex> guard(mutex_);
-  return FirstIndexUnSafe();
+  return std::make_tuple(FirstIndexUnSafe(), Status::OK());
 }
 
 std::tuple<SnapshotPtr, Status> MemoryStorage::SnapShot() {
@@ -148,7 +148,7 @@ std::tuple<SnapshotPtr, Status> MemoryStorage::CreateSnapshot(
   snapshot_->mutable_metadata()->set_index(i);
   snapshot_->mutable_metadata()->set_term(ents_[i - offset]->term());
   if (cs != nullptr) {
-    *(snapshot_->mutable_metadata()->mutable_conf_state()) = cs;
+    *(snapshot_->mutable_metadata()->mutable_conf_state()) = *cs;
   }
 
   *(snapshot_->mutable_data()) = data;
@@ -224,14 +224,14 @@ Status MemoryStorage::Append(EntryPtrs entries) {
   return Status::OK();
 }
 
-std::tuple<uint64_t, Status> MemoryStorage::LastIndexUnSafe() const {
+uint64_t MemoryStorage::LastIndexUnSafe() const {
   assert(!ents_.empty());
-  return std::make_tuple(ents_[0]->index() + static_cast<uint64_t>(ents_.size()) - 1, Status::OK());
+  return ents_[0]->index() + static_cast<uint64_t>(ents_.size()) - 1;
 }
 
-std::tuple<uint64_t, Status> MemoryStorage::FirstIndexUnSafe() const {
+uint64_t MemoryStorage::FirstIndexUnSafe() const {
   assert(!ents_.empty());
-  return std::make_tuple(ents_[0]->index() + 1, Status::OK());
+  return ents_[0]->index() + 1;
 }
 
 }  // namespace craft

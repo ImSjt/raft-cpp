@@ -1,7 +1,5 @@
 // Copyright 2023 JT
 //
-// Copyright 2019 The etcd Authors
-//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -15,21 +13,15 @@
 // limitations under the License.
 #pragma once
 
-#include <vector>
+#include <memory>
 
-#include "confchange/confchange.h"
 #include "raft.pb.h"
 
 namespace craft {
 
-// Restore takes a Changer (which must represent an empty configuration), and
-// runs a sequence of changes enacting the configuration described in the
-// ConfState.
-//
-// TODO(tbg) it's silly that this takes a Changer. Unravel this by making sure
-// the Changer only needs a ProgressMap (not a whole Tracker) at which point
-// this can just take LastIndex and Ma
-std::tuple<ProgressTracker::Config, ProgressMap, Status> Restore(
-    Changer chg, const raftpb::ConfState& cs);
+using EntryPtr = std::shared_ptr<raftpb::Entry>;
+using EntryPtrs = std::vector<EntryPtr>;
+
+using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;
 
 }  // namespace craft

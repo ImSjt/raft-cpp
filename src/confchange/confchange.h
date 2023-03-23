@@ -18,8 +18,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "craft/raft.pb.h"
-#include "craft/status.h"
+#include "raft.pb.h"
+#include "status.h"
 #include "tracker/tracker.h"
 
 namespace craft {
@@ -81,8 +81,7 @@ class Changer {
 
   // MakeVoter adds or promotes the given ID to be a voter in the incoming
   // majority config.
-  void MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs,
-                 uint64_t id);
+  void MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id);
 
   // MakeLearner makes the given ID a learner or stages it to be a learner once
   // an active joint configuration is exited.
@@ -97,16 +96,14 @@ class Changer {
   // simultaneously. Instead, we add the learner to LearnersNext, so that it
   // will be added to Learners the moment the outgoing config is removed by
   // LeaveJoint().
-  void MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs,
-                   uint64_t id);
+  void MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id);
 
   // remove this peer as a voter or learner from the incoming config.
-  void Remove(ProgressTracker::Config& cfg, ProgressMap& prs,
-              uint64_t id);
+  void Remove(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id);
 
   // initProgress initializes a new progress for the given node or learner.
-  void InitProgress(ProgressTracker::Config& cfg, ProgressMap& prs,
-                    uint64_t id, bool is_learner);
+  void InitProgress(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id,
+                    bool is_learner);
 
   ProgressTracker& GetProgressTracker() { return tracker_; }
 

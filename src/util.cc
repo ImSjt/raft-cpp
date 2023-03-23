@@ -11,17 +11,24 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#pragma once
-
-#include <memory>
-
-#include "craft/raft.pb.h"
+#include "util.h"
 
 namespace craft {
 
-using EntryPtr = std::shared_ptr<raftpb::Entry>;
-using EntryPtrs = std::vector<EntryPtr>;
+EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
+  if (ents.empty()) {
+    return EntryPtrs();
+  }
 
-using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;
+  uint64_t size = 0;
+  for (auto it = ents.begin(); it != ents.end(); ++it) {
+    size += static_cast<uint64_t>((*it)->ByteSizeLong());
+    if (size > max_size) {
+      ents.erase(it, ents.end());
+      break;
+    }
+  }
+  return std::move(ents);
+}
 
 }  // namespace craft

@@ -71,7 +71,6 @@ Index MajorityConfig::CommittedIndex(const AckedIndexer& l) const {
     // the left after sorting below anyway).
     size_t i = n - 1;
     for (uint64_t id : config_) {
-      bool ok;
       auto [idx, ok] = l.AckedIndex(id);
       if (ok) {
         srt[i] = idx;
@@ -133,7 +132,7 @@ std::string MajorityConfig::String() const {
 }
 
 std::string MajorityConfig::Describe(const AckedIndexer& l) const {
-  return ""
+  return "";
 }
 
 }  // namespace craft

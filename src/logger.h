@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <functional>
 
-#include "common/singleton.h"
-#include "common/fixed_buffer.h"
+#include "singleton.h"
+#include "fixed_buffer.h"
 
 namespace craft {
 

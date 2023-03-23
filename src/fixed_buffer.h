@@ -4,15 +4,13 @@
 #include <cstdint>
 #include <cstring>
 
-#include "craft/noncopyable.h"
-
 namespace craft {
 
 const int kSmallBuffer = 4096;
 const int kLargeBuffer = 4096*1024;
 
 template<int32_t size>
-class FixedBuffer : public noncopyable {
+class FixedBuffer {
  public:
     FixedBuffer(int32_t index = -1) :
         index_(index),

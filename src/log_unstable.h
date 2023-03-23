@@ -18,9 +18,9 @@
 #include <memory>
 #include <vector>
 
-#include "craft/define.h"
-#include "craft/raft.pb.h"
-#include "craft/status.h"
+#include "define.h"
+#include "raft.pb.h"
+#include "status.h"
 
 class RaftLog;
 namespace craft {
@@ -63,9 +63,9 @@ class Unstable {
 
  private:
   // shrinkEntriesArray discards the underlying array used by the entries slice
-  // if most of it isn't being used. This avoids holding references to a bunch of
-  // potentially large entries that aren't needed anymore. Simply clearing the
-  // entries wouldn't be safe because clients might still be using them.
+  // if most of it isn't being used. This avoids holding references to a bunch
+  // of potentially large entries that aren't needed anymore. Simply clearing
+  // the entries wouldn't be safe because clients might still be using them.
   void ShrikEntriesArray();
 
   // u.offset <= lo <= hi <= u.offset+len(u.entries)

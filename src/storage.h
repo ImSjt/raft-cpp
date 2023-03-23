@@ -21,9 +21,9 @@
 #include <string>
 #include <vector>
 
-#include "craft/define.h"
-#include "craft/raft.pb.h"
-#include "craft/status.h"
+#include "raft.pb.h"
+#include "define.h"
+#include "status.h"
 
 namespace craft {
 
@@ -140,8 +140,8 @@ class MemoryStorage : public Storage {
   Status Append(EntryPtrs entries);
 
  private:
-  std::tuple<uint64_t, Status> LastIndexUnSafe() const;
-  std::tuple<uint64_t, Status> FirstIndexUnSafe() const;
+  uint64_t LastIndexUnSafe() const;
+  uint64_t FirstIndexUnSafe() const;
 
   // Protects access to all fields. Most methods of MemoryStorage are
   // run on the raft thread, but Append() is run on an application

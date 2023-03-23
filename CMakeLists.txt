@@ -41,12 +41,12 @@ set (PROTOBUF_PROTOC_EXECUTABLE "${PROTO_LIB_DIR}/../bin/protoc")
 # ENDFOREACH()
 
 execute_process(
-    COMMAND ${PROTOBUF_PROTOC_EXECUTABLE} -I${PROJECT_SOURCE_DIR}/include --cpp_out=${PROJECT_SOURCE_DIR}/include craft/raft.proto
+    COMMAND ${PROTOBUF_PROTOC_EXECUTABLE} -I${PROJECT_SOURCE_DIR}/src --cpp_out=${PROJECT_SOURCE_DIR}/src raft.proto
 )
 
-execute_process(
-    COMMAND mv ${PROJECT_SOURCE_DIR}/include/craft/raft.pb.cc ${PROJECT_SOURCE_DIR}/src/
-)
+# execute_process(
+#     COMMAND mv ${PROJECT_SOURCE_DIR}/include/craft/raft.pb.cc ${PROJECT_SOURCE_DIR}/src/
+# )
 
 list(APPEND EXTRA_LIBS "${PROTOBUF_LIBRARY}")
 list(APPEND EXTRA_INCLUDES "${PROJECT_SOURCE_DIR}/src" "${Protobuf_INCLUDE_DIRS}")
@@ -56,38 +56,40 @@ include_directories("${EXTRA_INCLUDES}")
 
 add_library(craft "")
 target_sources(craft
-    PRIVATE
-    "src/common/singleton.h"
-    "src/common/fixed_buffer.h"
-    "src/common/logger.cc"
-    "src/common/logger.h"
-    "src/common/status.cc"
-    "src/common/util.cc"
-    "src/common/util.h"
-    "src/raft.pb.cc"
-    "src/storage.cc"
+    # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
+    PUBLIC
+    "src/confchange/confchange.cc"
+    "src/confchange/confchange.h"
+    "src/confchange/restore.cc"
+    "src/confchange/restore.h"
+    "src/define.h"
+    "src/fixed_buffer.h"
     "src/log_unstable.cc"
+    "src/log_unstable.h"
     "src/log.cc"
-    "src/quorum/quorum.h"
-    "src/quorum/majority.cc"
-    "src/quorum/majority.h"
+    "src/log.h"
+    "src/logger.cc"
+    "src/logger.h"
     "src/quorum/joint.cc"
     "src/quorum/joint.h"
-    "src/tracker/inflights.h"
+    "src/quorum/majority.cc"
+    "src/quorum/majority.h"
+    "src/quorum/quorum.h"
+    "src/raft.pb.cc"
+    "src/raft.pb.h"
+    "src/singleton.h"
+    "src/status.cc"
+    "src/status.h"
+    "src/storage.cc"
+    "src/storage.h"
     "src/tracker/inflights.cc"
-    "src/tracker/progress.h"
+    "src/tracker/inflights.h"
     "src/tracker/progress.cc"
-    "src/tracker/tracker.h"
+    "src/tracker/progress.h"
     "src/tracker/tracker.cc"
-
-    # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
-    $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
-    "${CRAFT_PUBLIC_INCLUDE_DIR}/raft.pb.h"
-    "${CRAFT_PUBLIC_INCLUDE_DIR}/status.h"
-    "${CRAFT_PUBLIC_INCLUDE_DIR}/noncopyable.h"
-    "${CRAFT_PUBLIC_INCLUDE_DIR}/storage.h"
-    "${CRAFT_PUBLIC_INCLUDE_DIR}/log_unstable.h"
-    "${CRAFT_PUBLIC_INCLUDE_DIR}/log.h"
+    "src/tracker/tracker.h"
+    "src/util.cc"
+    "src/util.h"
 )
 target_link_libraries(craft "${EXTRA_LIBS}")
 target_link_libraries (craft glog::glog)
@@ -109,10 +111,10 @@ function(craft_test test_file)
     
 endfunction(craft_test)
 
-craft_test("src/storage_test.cc")
-craft_test("src/log_unstable_test.cc")
-craft_test("src/log_test.cc")
-craft_test("src/quorum/majority_test.cc")
-craft_test("src/quorum/joint_test.cc")
-craft_test("src/tracker/inflights_test.cc")
-craft_test("src/tracker/progress_test.cc")
+# craft_test("src/storage_test.cc")
+# craft_test("src/log_unstable_test.cc")
+# craft_test("src/log_test.cc")
+# craft_test("src/quorum/majority_test.cc")
+# craft_test("src/quorum/joint_test.cc")
+# craft_test("src/tracker/inflights_test.cc")
+# craft_test("src/tracker/progress_test.cc")

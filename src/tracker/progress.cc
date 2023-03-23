@@ -17,7 +17,7 @@
 
 #include <cassert>
 
-#include "common/logger.h"
+#include "logger.h"
 
 namespace craft {
 
@@ -112,6 +112,7 @@ bool Progress::IsPaused() {
     default:
       LOG_FATAL("unexpected state");
   }
+  return true;
 }
 
 std::string Progress::String() const {

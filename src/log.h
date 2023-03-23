@@ -18,10 +18,10 @@
 #include <memory>
 #include <string>
 
-#include "craft/define.h"
-#include "craft/log_unstable.h"
-#include "craft/status.h"
-#include "craft/storage.h"
+#include "define.h"
+#include "log_unstable.h"
+#include "status.h"
+#include "storage.h"
 
 namespace craft {
 

@@ -17,12 +17,12 @@
 
 #include <cstdint>
 #include <functional>
-#include <set>
 #include <map>
 #include <memory>
+#include <set>
 
-#include "craft/raft.pb.h"
 #include "quorum/joint.h"
+#include "raft.pb.h"
 #include "tracker/progress.h"
 
 namespace craft {
@@ -142,7 +142,9 @@ class ProgressTracker {
   ProgressPtr GetProgress(uint64_t id);
 
   void SetConfig(Config&& config) { config_ = std::move(config); }
-  void SetProgressMap(ProgressMap&& progress) { progress_ = std::move(progress); }
+  void SetProgressMap(ProgressMap&& progress) {
+    progress_ = std::move(progress);
+  }
 
   int64_t MaxInflight() const { return max_inflight_; }
 

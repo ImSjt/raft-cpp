@@ -15,7 +15,7 @@
 // limitations under the License.
 #include "tracker/inflights.h"
 
-#include "common/logger.h"
+#include "logger.h"
 
 namespace craft {
 

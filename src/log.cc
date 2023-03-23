@@ -13,12 +13,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "craft/log.h"
+#include "log.h"
 
 #include <cassert>
 
-#include "common/logger.h"
-#include "common/util.h"
+#include "logger.h"
+#include "util.h"
 
 namespace craft {
 
@@ -35,10 +35,10 @@ RaftLog::RaftLog(std::shared_ptr<Storage> storage, uint64_t max_next_ents_size)
   assert(storage_ != nullptr);
   storage->FirstIndex();
 
-  auto [first_index, status] = storage->FirstIndex();
-  assert(status.IsOK());
-  auto [last_index, status] = storage->LastIndex();
-  assert(status.IsOK());
+  auto [first_index, s1] = storage->FirstIndex();
+  assert(s1.IsOK());
+  auto [last_index, s2] = storage->LastIndex();
+  assert(s2.IsOK());
 
   unstable_.offset_ = last_index + 1;
   // Initialize our committed and applied pointers to the time of the last
@@ -113,23 +113,23 @@ std::tuple<SnapshotPtr, Status> RaftLog::Snapshot() const {
 }
 
 uint64_t RaftLog::FirstIndex() const {
-  auto [index, ok] = unstable_.MaybeFirstIndex();
+  auto [index1, ok] = unstable_.MaybeFirstIndex();
   if (ok) {
-    return index;
+    return index1;
   }
-  auto [index, status] = storage_->FirstIndex();
+  auto [index2, status] = storage_->FirstIndex();
   assert(status.IsOK());
-  return index;
+  return index2;
 }
 
 uint64_t RaftLog::LastIndex() const {
-  auto [index, ok] = unstable_.MaybeLastIndex();
+  auto [index1, ok] = unstable_.MaybeLastIndex();
   if (ok) {
-    return index;
+    return index1;
   }
-  auto [index, status] = storage_->LastIndex();
+  auto [index2, status] = storage_->LastIndex();
   assert(status.IsOK());
-  return index;
+  return index2;
 }
 
 void RaftLog::CommitTo(uint64_t tocommit) {
@@ -172,14 +172,14 @@ std::tuple<uint64_t, Status> RaftLog::Term(uint64_t i) const {
     return std::make_tuple(0, Status::OK());
   }
 
-  auto [term, ok] = unstable_.MaybeTerm(i);
+  auto [term1, ok] = unstable_.MaybeTerm(i);
   if (ok) {
-    return std::make_tuple(term, Status::OK());
+    return std::make_tuple(term1, Status::OK());
   }
 
-  auto [term, status] = storage_->Term(i);
+  auto [term2, status] = storage_->Term(i);
   if (status.IsOK()) {
-    return std::make_tuple(term, Status::OK());
+    return std::make_tuple(term2, Status::OK());
   }
 
   if (std::strstr(status.Str(), kErrCompacted) ||
@@ -208,6 +208,7 @@ EntryPtrs RaftLog::AllEntries() const {
     return AllEntries();
   }
   LOG_FATAL("unexpected error: %s", status.Str());
+  return EntryPtrs();
 }
 
 bool RaftLog::IsUpToData(uint64_t lasti, uint64_t term) const {

@@ -3,8 +3,6 @@
 #include <mutex>
 #include <memory>
 
-#include "craft/noncopyable.h"
-
 namespace craft {
 
 // lazy singleton

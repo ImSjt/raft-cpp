@@ -33,7 +33,7 @@ class Status {
 
   static Status Error(const char* format, ...);
 
-  // Returns true iff the status indicates success.
+  // Returns true if the status indicates success.
   bool IsOK() const { return (state_ == nullptr); }
 
   const char* Str() const { return state_ == nullptr ? "OK" : state_; }

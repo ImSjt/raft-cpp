@@ -11,19 +11,37 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#pragma once
+#include "status.h"
 
-#include <cstdint>
-#include <vector>
-
-#include "craft/define.h"
-#include "craft/raft.pb.h"
+#include <cstdio>
+#include <cstdarg>
+#include <cstring>
 
 namespace craft {
 
-class Util {
- public:
-  static EntryPtrs LimitSize(EntryPtrs&& ents, uint64_t max_size);
-};
+char* Status::CopyState(char* dst, const char* src) {
+    if (src == nullptr) {
+        return dst;
+    }
 
-}  // namespace craft
+    if (dst == nullptr) {
+        dst = new char[kStateMaxSize];
+    }
+
+    std::memcpy(dst, src, kStateMaxSize);
+
+    return dst;
+}
+
+Status Status::Error(const char* format, ...) {
+    char* state = new char[kStateMaxSize];
+    va_list vlist;
+
+    va_start(vlist, format);
+    vsnprintf(state, kStateMaxSize, format, vlist);
+    va_end(vlist);
+
+    return Status(state);
+}
+
+} // namespace craft
