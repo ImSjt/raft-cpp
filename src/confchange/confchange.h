@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "raft.pb.h"
+#include "raftpb/raft.pb.h"
 #include "status.h"
 #include "tracker/tracker.h"
 
@@ -30,7 +30,8 @@ namespace craft {
 // configuration.
 class Changer {
  public:
-  // Changer();
+  Changer(const ProgressTracker& tracker, uint64_t last_index)
+    : tracker_(tracker), last_index_(last_index) {}
 
   // EnterJoint verifies that the outgoing (=right) majority config of the joint
   // config is empty and initializes it with a copy of the incoming (=left)

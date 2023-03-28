@@ -17,13 +17,26 @@
 #include <vector>
 
 #include "define.h"
-#include "raft.pb.h"
+#include "logger.h"
+#include "raftpb/raft.pb.h"
 
 namespace craft {
 
 class Util {
  public:
   static EntryPtrs LimitSize(EntryPtrs&& ents, uint64_t max_size);
+
+  static raftpb::MessageType VoteRespMsgType(raftpb::MessageType msgt) {
+    switch (msgt) {
+    case raftpb::MessageType::MsgVote:
+      return raftpb::MessageType::MsgVoteResp;
+    case raftpb::MessageType::MsgPreVote:
+      return raftpb::MessageType::MsgPreVoteResp;
+    default:
+      LOG_FATAL("unexpect type: %d", raftpb::MessageType_Name(msgt).c_str());
+      return msgt;
+    }
+  }
 };
 
 }  // namespace craft

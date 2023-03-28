@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "raft.pb.h"
+#include "raftpb/raft.pb.h"
 #include "define.h"
 #include "status.h"
 

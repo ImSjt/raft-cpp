@@ -87,6 +87,8 @@ class Progress {
   bool IsPaused();
 
   uint64_t Match() const { return match_; }
+  void SetMatch(uint64_t match) { match_ = match; }
+
   uint64_t Next() const { return next_; }
   StateType State() const { return state_; }
   uint64_t PendingSnapshot() const { return pending_snapshot_; }

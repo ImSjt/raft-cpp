@@ -41,7 +41,7 @@ set (PROTOBUF_PROTOC_EXECUTABLE "${PROTO_LIB_DIR}/../bin/protoc")
 # ENDFOREACH()
 
 execute_process(
-    COMMAND ${PROTOBUF_PROTOC_EXECUTABLE} -I${PROJECT_SOURCE_DIR}/src --cpp_out=${PROJECT_SOURCE_DIR}/src raft.proto
+    COMMAND ${PROTOBUF_PROTOC_EXECUTABLE} -I${PROJECT_SOURCE_DIR}/src/raftpb --cpp_out=${PROJECT_SOURCE_DIR}/src/raftpb raft.proto
 )
 
 # execute_process(
@@ -75,8 +75,10 @@ target_sources(craft
     "src/quorum/majority.cc"
     "src/quorum/majority.h"
     "src/quorum/quorum.h"
-    "src/raft.pb.cc"
-    "src/raft.pb.h"
+    "src/raftpb/raft.pb.cc"
+    "src/raftpb/raft.pb.h"
+    "src/raftpb/confstate.cc"
+    "src/raftpb/confstate.h"
     "src/singleton.h"
     "src/status.cc"
     "src/status.h"

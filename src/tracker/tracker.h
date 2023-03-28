@@ -22,7 +22,7 @@
 #include <set>
 
 #include "quorum/joint.h"
-#include "raft.pb.h"
+#include "raftpb/raft.pb.h"
 #include "tracker/progress.h"
 
 namespace craft {
@@ -94,7 +94,7 @@ class ProgressTracker {
     std::string Describe() const { return ""; }
   };
 
-  using Closure = std::function<void(uint64_t id, ProgressPtr pr)>;
+  using Closure = std::function<void(uint64_t id, ProgressPtr& pr)>;
 
   ProgressTracker(int64_t max_inflight) : max_inflight_(max_inflight) {}
 
@@ -141,7 +141,11 @@ class ProgressTracker {
   const ProgressMap& GetProgressMap() const { return progress_; }
   ProgressPtr GetProgress(uint64_t id);
 
+  void SetConfig(const Config& config) { config_ = config; }
   void SetConfig(Config&& config) { config_ = std::move(config); }
+  void SetProgressMap(const ProgressMap& progress) {
+    progress_ = progress;
+  }
   void SetProgressMap(ProgressMap&& progress) {
     progress_ = std::move(progress);
   }

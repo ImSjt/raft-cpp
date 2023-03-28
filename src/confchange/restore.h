@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "confchange/confchange.h"
-#include "raft.pb.h"
+#include "raftpb/raft.pb.h"
 
 namespace craft {
 

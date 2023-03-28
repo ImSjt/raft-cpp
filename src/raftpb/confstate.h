@@ -13,17 +13,10 @@
 // limitations under the License.
 #pragma once
 
-#include <memory>
-
 #include "raftpb/raft.pb.h"
 
 namespace craft {
 
-using EntryPtr = std::shared_ptr<raftpb::Entry>;
-using EntryPtrs = std::vector<EntryPtr>;
-
-using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;
-
-using MsgPtr = std::shared_ptr<raftpb::Message>;
+bool operator==(const raftpb::ConfState& cs1, const raftpb::ConfState& cs2);
 
 }  // namespace craft

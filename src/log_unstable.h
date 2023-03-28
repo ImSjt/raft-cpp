@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "define.h"
-#include "raft.pb.h"
+#include "raftpb/raft.pb.h"
 #include "status.h"
 
 class RaftLog;

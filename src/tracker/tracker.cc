@@ -83,7 +83,7 @@ uint64_t ProgressTracker::Committed() const {
 }
 
 void ProgressTracker::Visit(Closure&& func) {
-  for (const auto& p : progress_) {
+  for (auto& p : progress_) {
     func(p.first, p.second);
   }
 }

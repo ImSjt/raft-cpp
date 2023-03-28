@@ -56,6 +56,10 @@ class ReadOnly {
     kNumReadOnlyOption
   };
 
+  ReadOnly(const ReadOnlyOption& option) : option_(option) {}
+
+  const ReadOnlyOption& GetReadOnlyOption() const { return option_; }
+
  private:
   ReadOnlyOption option_;
   std::map<std::string, std::shared_ptr<ReadIndexStatus>> pending_read_index_;
