@@ -70,6 +70,9 @@
         "semaphore": "cpp",
         "stop_token": "cpp",
         "cinttypes": "cpp",
-        "shared_mutex": "cpp"
+        "shared_mutex": "cpp",
+        "ranges": "cpp",
+        "strstream": "cpp",
+        "storage_test": "cpp"
     }
 }

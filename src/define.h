@@ -25,5 +25,6 @@ using EntryPtrs = std::vector<EntryPtr>;
 using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;
 
 using MsgPtr = std::shared_ptr<raftpb::Message>;
+using MsgPtrs = std::vector<MsgPtr>;
 
 }  // namespace craft

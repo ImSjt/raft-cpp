@@ -13,6 +13,8 @@
 // limitations under the License.
 #include "util.h"
 
+#include <storage_test>
+
 namespace craft {
 
 EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
@@ -29,6 +31,33 @@ EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
     }
   }
   return std::move(ents);
+}
+
+EntryPtrs Util::MakeEntries(MsgPtr msg) {
+  EntryPtrs entries;
+  for (size_t i = 0; i < msg->entries_size(); i++) {
+    entries.emplace_back(
+        std::make_shared<raftpb::Entry>(std::move(*(msg->mutable_entries(i)))));
+  }
+  return entries;
+}
+
+MsgPtr Util::MakeMsg(const EntryPtrs& ents) {
+  auto m = std::make_shared<raftpb::Message>();
+  for (auto& ent : ents) {
+    m->add_entries()->CopyFrom(*ent);
+  }
+  return m;
+}
+
+std::vector<std::string> Util::Split(const std::string& s, char delimiter) {
+  std::vector<std::string> tokens;
+  std::string token;
+  std::istringstream token_stream(s);
+  while (std::getline(token_stream, token, delimiter)) {
+    tokens.push_back(token);
+  }
+  return tokens;
 }
 
 }  // namespace craft

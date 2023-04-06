@@ -138,6 +138,7 @@ class ProgressTracker {
   std::tuple<int32_t, int32_t, VoteState> TallyVotes() const;
 
   const Config& GetConfig() const { return config_; }
+  Config& GetConfig() { return config_; }
   const ProgressMap& GetProgressMap() const { return progress_; }
   ProgressPtr GetProgress(uint64_t id);
 

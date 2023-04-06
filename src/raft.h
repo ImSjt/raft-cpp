@@ -27,82 +27,84 @@
 
 namespace craft {
 
-using MsgPtr = std::shared_ptr<raftpb::Message>;
-
-enum RaftStateType { kFollower, kCandidate, kLeader, kPreCandidate, kNumState };
-
-// enum CampaignType {
-//   // kPreElection represents the first phase of a normal election when
-//   // Config.PreVote is true.
-//   kPreElection,
-//   // kElection represents a normal (time-based) election (the second phase
-//   // of the election when Config.PreVote is true).
-//   kElection,
-//   // kTransfer represents the type of leader transfer.
-//   kTransfer,
-// };
-
-struct CampaignType {
-  enum Type {
-    // kPreElection represents the first phase of a normal election when
-    // Config.PreVote is true.
-    kPreElection,
-    // kElection represents a normal (time-based) election (the second phase
-    // of the election when Config.PreVote is true).
-    kElection,
-    // kTransfer represents the type of leader transfer.
-    kTransfer,
-  };
-
-  static const std::string kCampaignPreElection;
-  static const std::string kCampaignElection;
-  static const std::string kCampaignTransfer;
-  static const std::string kCampaignUnknow;
-
-  CampaignType(Type t) : type(t) {}
-
-  bool operator==(CampaignType other) const {
-    return type == other.type;
-  }
-
-  bool operator==(Type other) const {
-    return type == other;
-  }
-
-  const std::string& String() {
-    if (type == kPreElection) {
-      return kCampaignElection;
-    } else if (type == kElection) {
-      return kCampaignElection;
-    } else if (type == kTransfer) {
-      return kCampaignTransfer;
-    } else {
-      return kCampaignUnknow;
-    }
-  }
-
-  Type type;
+enum RaftStateType {
+  kFollower,
+  kCandidate,
+  kLeader,
+  kPreCandidate,
+  kNumState
 };
 
-// // kCampaignPreElection represents the first phase of a normal election when
-// // Config.PreVote is true.
-// static const std::string kCampaignPreElection = "CampaignPreElection";
-// // kCampaignElection represents a normal (time-based) election (the second phase
-// // of the election when Config.PreVote is true).
-// static const std::string kCampaignElection = "CampaignElection";
-// // kCampaignTransfer represents the type of leader transfer.
-// static const std::string kCampaignTransfer = "CampaignTransfer";
+enum CampaignType {
+  // kPreElection represents the first phase of a normal election when
+  // Config.PreVote is true.
+  kPreElection,
+  // kElection represents a normal (time-based) election (the second phase
+  // of the election when Config.PreVote is true).
+  kElection,
+  // kTransfer represents the type of leader transfer.
+  kTransfer,
+};
 
 struct SoftState {
   uint64_t lead;
   RaftStateType raft_state;
 };
 
+// Ready encapsulates the entries and messages that are ready to read,
+// be saved to stable storage, committed or sent to other peers.
+// All fields in Ready are read-only.
+struct Ready {
+	// The current volatile state of a Node.
+	// SoftState will be nil if there is no update.
+	// It is not required to consume or store SoftState.
+	SoftState soft_state;
+
+	// The current state of a Node to be saved to stable storage BEFORE
+	// Messages are sent.
+	// HardState will be equal to empty state if there is no update.
+  raftpb::HardState hard_state;
+
+	// read_states can be used for node to serve linearizable read requests locally
+	// when its applied index is greater than the index in ReadState.
+	// Note that the readState will be returned when raft receives msgReadIndex.
+	// The returned is only valid for the request that requested to read.
+  std::vector<std::shared_ptr<ReadState>> read_states;
+
+	// entries specifies entries to be saved to stable storage BEFORE
+	// Messages are sent.
+  EntryPtrs entries;
+
+	// snapshot specifies the snapshot to be saved to stable storage.
+  SnapshotPtr snapshot;
+
+	// committed_entries specifies entries to be committed to a
+	// store/state-machine. These have previously been committed to stable
+	// store.
+  EntryPtrs committed_entries;
+
+	// messages specifies outbound messages to be sent AFTER Entries are
+	// committed to stable storage.
+	// If it contains a MsgSnap message, the application MUST report back to raft
+	// when the snapshot has been received or has failed by calling ReportSnapshot.
+  MsgPtrs messages;
+
+	// MustSync indicates whether the HardState and Entries must be synchronously
+	// written to disk or if an asynchronous write is permissible.
+	bool must_sync;
+
+  // AppliedCursor extracts from the Ready the highest index the client has
+  // applied (once the Ready is confirmed via Advance). If no information is
+  // contained in the Ready, returns zero.
+  uint64_t AppliedCursor() const;
+};
+
+const std::string& RaftStateTypeName(RaftStateType t);
+const std::string& CampaignTypeName(CampaignType t);
+
 // ErrProposalDropped is returned when the proposal is ignored by some cases,
 // so that the proposer can be notified and fail fast.
 const char* const kErrProposalDropped = "raft proposal dropped";
-
-// const std::string& 
 
 class Raft {
  public:
@@ -212,7 +214,13 @@ class Raft {
     return SoftState{.lead = lead_, .raft_state = state_};
   }
 
-  raftpb::HardState GetHardState() const;
+  raftpb::HardState GetHardState() const {
+    raftpb::HardState hard_state;
+    hard_state.set_term(term_);
+    hard_state.set_vote(vote_);
+    hard_state.set_commit(raft_log_->Committed());
+    return hard_state;
+  }
 
   // send schedules persisting state to a stable storage and AFTER that
   // sending the message (as part of next Ready message processing).
@@ -241,19 +249,20 @@ class Raft {
 
   void BcastHeartbeatWithCtx(const std::string& ctx);
 
-  // void Advance(const Ready& rd);
+  void Advance(const Ready& rd);
 
   bool MaybeCommit();
 
   void Reset(uint64_t term);
 
+  bool AppendEntry(const EntryPtr& e);
   bool AppendEntry(const EntryPtrs& es);
 
   // TickElection is run by followers and candidates after election_timeout_.
   void TickElection();
 
-  // TickHearbeat is run by leaders to send a MsgBeat after heartbeat_timeout_.
-  void TickHearbeat();
+  // TickHeartbeat is run by leaders to send a MsgBeat after heartbeat_timeout_.
+  void TickHeartbeat();
 
   void BecomeFollower(uint64_t term, uint64_t lead);
 
@@ -290,13 +299,13 @@ class Raft {
   // the configuration of state machine. If this method returns false, the
   // snapshot was ignored, either because it was obsolete or because of an
   // error.
-  bool Restore(SnapshotPtr s);
+  bool Restore(raftpb::Snapshot* s);
 
   // Promotable indicates whether state machine can be promoted to leader,
   // which is true when its own id is in progress list.
   bool Promotable();
 
-  raftpb::ConfState ApplyConfChange(const raftpb::ConfChangeV2& cc);
+  raftpb::ConfState ApplyConfChange(raftpb::ConfChangeV2& cc);
 
   // SwitchToConfig reconfigures this node to use the provided configuration. It
   // updates the in-memory state and, when necessary, carries out additional
@@ -376,7 +385,7 @@ class Raft {
   // is_learner_ is true if the local raft node is a learner.
   bool is_learner_;
 
-  std::deque<MsgPtr> msgs;
+  std::deque<MsgPtr> msgs_;
 
   // the leader id
   uint64_t lead_;
@@ -404,9 +413,9 @@ class Raft {
   // valid message from current leader when it is a follower.
   int64_t election_elapsed_;
 
-  // number of ticks since it reached last hearbeat_timeout_.
-  // only leader keeps heartbeatElapsed.
-  int64_t hearbeat_elapsed_;
+  // number of ticks since it reached last heartbeat_elapsed_.
+  // only leader keeps heartbeat_elapsed_.
+  int64_t heartbeat_elapsed_;
 
   bool check_quorum_;
   bool pre_vote_;

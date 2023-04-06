@@ -91,11 +91,20 @@ class Progress {
 
   uint64_t Next() const { return next_; }
   StateType State() const { return state_; }
+
   uint64_t PendingSnapshot() const { return pending_snapshot_; }
+  void SetPendingSnapshot(uint64_t v) { pending_snapshot_ = v; }
+
   bool RecentActive() const { return recent_active_; }
+  void SetRecentActive(bool v) { recent_active_ = v; }
+
   bool ProbeSent() const { return probe_sent_; }
+  void SetProbeSent(bool v) { probe_sent_ = v; }
+
   bool IsLearner() const { return is_learner_; }
   void SetIsLearner(bool v) { is_learner_ = v; }
+
+  Inflights* GetInflights() { return inflights_.get(); }
 
   std::string String() const;
 

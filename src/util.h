@@ -37,6 +37,14 @@ class Util {
       return msgt;
     }
   }
+
+  static EntryPtrs MakeEntries(MsgPtr msg);
+
+  static MsgPtr MakeMsg(const EntryPtrs& ents);
+
+  static std::vector<std::string> Split(const std::string& s, char delimiter);
+
+  static size_t PayloadSize(const EntryPtr& e) { return e->data().size(); }
 };
 
 }  // namespace craft

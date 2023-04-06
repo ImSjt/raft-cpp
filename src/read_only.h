@@ -20,6 +20,9 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <deque>
+
+#include "define.h"
 
 namespace craft {
 
@@ -29,14 +32,14 @@ namespace craft {
 // state is what it requests through request_ctx_, eg. given a unique id as
 // request_ctx_
 struct ReadState {
-  uint64_t index_;
-  std::string request_ctx_;
+  uint64_t index;
+  std::string request_ctx;
 };
 
 struct ReadIndexStatus {
-  // Message req_;
-  uint64_t index_;
-  std::map<uint64_t, bool> acks_;
+  MsgPtr req;
+  uint64_t index;
+  std::map<uint64_t, bool> acks;
 };
 
 class ReadOnly {
@@ -58,12 +61,34 @@ class ReadOnly {
 
   ReadOnly(const ReadOnlyOption& option) : option_(option) {}
 
+  // AddRequest adds a read only request into readonly struct.
+  // `index` is the commit index of the raft state machine when it received
+  // the read only request.
+  // `m` is the original read only request message from the local or remote node.
+  void AddRequest(uint64_t index, MsgPtr m);
+
+  // RecvAck notifies the readonly struct that the raft state machine received
+  // an acknowledgment of the heartbeat that attached with the read only request
+  // context.
+  const std::map<uint64_t, bool>& RecvAck(uint64_t id, const std::string& context);
+
+  // Advance advances the read only request queue kept by the readonly struct.
+  // It dequeues the requests until it finds the read only request that has
+  // the same context as the given `m`.
+  std::vector<std::shared_ptr<ReadIndexStatus>> Advance(MsgPtr m);
+
+  // LastPendingRequestCtx returns the context of the last pending read only
+  // request in readonly struct.
+  const std::string& LastPendingRequestCtx() const;
+
   const ReadOnlyOption& GetReadOnlyOption() const { return option_; }
+
+  ReadOnlyOption Option() const { return option_; }
 
  private:
   ReadOnlyOption option_;
   std::map<std::string, std::shared_ptr<ReadIndexStatus>> pending_read_index_;
-  std::list<std::string> read_index_queue_;
+  std::deque<std::string> read_index_queue_;
 };
 
 }  // namespace craft

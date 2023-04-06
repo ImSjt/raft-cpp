@@ -79,6 +79,12 @@ class RaftLog {
 
   std::tuple<SnapshotPtr, Status> Snapshot() const;
 
+  uint64_t Applied() const { return applied_; }
+  void SetApplied(uint64_t applied) { applied_ = applied; }
+
+  uint64_t Committed() const { return committed_; }
+  void SetCommitted(uint64_t committed) { committed_ = committed; }
+
   uint64_t FirstIndex() const;
 
   uint64_t LastIndex() const;
@@ -114,7 +120,6 @@ class RaftLog {
 
   void Restore(SnapshotPtr snapshot);
 
- private:
   uint64_t Append(const EntryPtrs& ents);
 
   // FindConflict finds the index of the conflict.
@@ -147,6 +152,7 @@ class RaftLog {
 
   uint64_t ZeroTermOnErrCompacted(std::tuple<uint64_t, Status> t) const;
 
+ private:
   // storage_ contains all stable entries since the last snapshot.
   std::shared_ptr<Storage> storage_;
   // unstable_ contains all unstable entries and snapshot.
