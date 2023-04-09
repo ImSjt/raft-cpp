@@ -78,6 +78,9 @@ class RaftLog {
   bool HasPendingSnapshot() const;
 
   std::tuple<SnapshotPtr, Status> Snapshot() const;
+  SnapshotPtr UnstableSnapshot() const {
+    return unstable_.Snapshot();
+  }
 
   uint64_t Applied() const { return applied_; }
   void SetApplied(uint64_t applied) { applied_ = applied; }

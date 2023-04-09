@@ -14,6 +14,8 @@
 #pragma once
 
 #include <memory>
+#include <deque>
+#include <vector>
 
 #include "raftpb/raft.pb.h"
 
@@ -25,6 +27,6 @@ using EntryPtrs = std::vector<EntryPtr>;
 using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;
 
 using MsgPtr = std::shared_ptr<raftpb::Message>;
-using MsgPtrs = std::vector<MsgPtr>;
+using MsgPtrs = std::deque<MsgPtr>;
 
 }  // namespace craft

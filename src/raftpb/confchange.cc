@@ -20,26 +20,26 @@
 
 namespace craft {
 
-const raftpb::ConfChangeV2& ConfChangeI::AsV2() {
+raftpb::ConfChangeV2 ConfChangeI::AsV2() const {
   if (!cc_v2_) {
     raftpb::ConfChangeV2 cc_v2;
     auto change_single = cc_v2.add_changes();
     change_single->set_type(cc_->type());
     change_single->set_node_id(cc_->node_id());
     cc_v2.set_context(cc_->context());
-    cc_v2_ = std::move(cc_v2);
+    return cc_v2;
   }
   return *cc_v2_;
 }
 
-std::tuple<const raftpb::ConfChange&, bool> ConfChangeI::AsV1() {
+std::tuple<raftpb::ConfChange, bool> ConfChangeI::AsV1() const {
   if (!cc_) {
     return std::make_tuple(raftpb::ConfChange(), false);    
   }
   return std::make_tuple(*cc_, true);
 }
 
-std::tuple<raftpb::EntryType, std::string, bool> ConfChangeI::Marshal() {
+std::tuple<raftpb::EntryType, std::string, bool> ConfChangeI::Marshal() const {
   raftpb::EntryType type;
   std::string ccdata;
   bool res;
@@ -48,7 +48,7 @@ std::tuple<raftpb::EntryType, std::string, bool> ConfChangeI::Marshal() {
     type = raftpb::EntryType::EntryConfChange;
     res = ccv1.AppendToString(&ccdata);
   } else {
-    auto& ccv2 = AsV2();
+    auto ccv2 = AsV2();
     type = raftpb::EntryType::EntryConfChangeV2;
     res = ccv2.AppendToString(&ccdata);
   }

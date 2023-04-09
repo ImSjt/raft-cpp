@@ -62,6 +62,7 @@ target_sources(craft
     "src/confchange/confchange.h"
     "src/confchange/restore.cc"
     "src/confchange/restore.h"
+    "src/confchange/restore.h"
     "src/define.h"
     "src/fixed_buffer.h"
     "src/log_unstable.cc"
@@ -79,6 +80,8 @@ target_sources(craft
     "src/raftpb/raft.pb.h"
     "src/raftpb/confstate.cc"
     "src/raftpb/confstate.h"
+    "src/raftpb/confchange.cc"
+    "src/raftpb/confchange.h"
     "src/singleton.h"
     "src/status.cc"
     "src/status.h"
@@ -92,6 +95,10 @@ target_sources(craft
     "src/tracker/tracker.h"
     "src/util.cc"
     "src/util.h"
+    "src/raft.cc"
+    "src/raft.h"
+    "src/rawnode.cc"
+    "src/rawnode.h"
 )
 target_link_libraries(craft "${EXTRA_LIBS}")
 target_link_libraries (craft glog::glog)

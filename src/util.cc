@@ -13,8 +13,6 @@
 // limitations under the License.
 #include "util.h"
 
-#include <storage_test>
-
 namespace craft {
 
 EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
@@ -53,11 +51,27 @@ MsgPtr Util::MakeMsg(const EntryPtrs& ents) {
 std::vector<std::string> Util::Split(const std::string& s, char delimiter) {
   std::vector<std::string> tokens;
   std::string token;
-  std::istringstream token_stream(s);
-  while (std::getline(token_stream, token, delimiter)) {
-    tokens.push_back(token);
-  }
+  // std::istringstream token_stream(s);
+  // while (std::getline(token_stream, token, delimiter)) {
+  //   tokens.push_back(token);
+  // }
   return tokens;
+}
+
+bool Util::IsLocalMsg(raftpb::MessageType msgt) {
+  return msgt == raftpb::MessageType::MsgHup ||
+         msgt == raftpb::MessageType::MsgBeat ||
+         msgt == raftpb::MessageType::MsgUnreachable ||
+         msgt == raftpb::MessageType::MsgSnapStatus ||
+         msgt == raftpb::MessageType::MsgCheckQuorum;
+}
+
+bool Util::IsResponseMsg(raftpb::MessageType msgt) {
+  return msgt == raftpb::MessageType::MsgAppResp ||
+         msgt == raftpb::MessageType::MsgVoteResp ||
+         msgt == raftpb::MessageType::MsgHeartbeatResp ||
+         msgt == raftpb::MessageType::MsgUnreachable ||
+         msgt == raftpb::MessageType::MsgPreVoteResp;
 }
 
 }  // namespace craft

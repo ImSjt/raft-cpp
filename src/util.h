@@ -45,6 +45,10 @@ class Util {
   static std::vector<std::string> Split(const std::string& s, char delimiter);
 
   static size_t PayloadSize(const EntryPtr& e) { return e->data().size(); }
+
+  static bool IsLocalMsg(raftpb::MessageType msgt);
+
+  static bool IsResponseMsg(raftpb::MessageType msgt);
 };
 
 }  // namespace craft

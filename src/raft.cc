@@ -64,8 +64,10 @@ const std::string& CampaignTypeName(CampaignType t) {
   }
 }
 
-static bool IsEmptyHardState(const raftpb::HardState& st) {
-  return !st.has_term() && !st.has_vote() && !st.has_commit();
+bool IsEmptyHardState(const raftpb::HardState& st) {
+  static raftpb::HardState empty_state;
+  return st.term() == empty_state.term() && st.vote() == empty_state.vote() &&
+         st.commit() == empty_state.commit();
 }
 
 static bool IsEmptySnap(const SnapshotPtr& sp) {
@@ -289,20 +291,16 @@ bool Raft::MaybeSendAppend(uint64_t to, bool send_if_empty) {
     }
     m->set_commit(raft_log_->Committed());
     if (!m->entries().empty()) {
-      switch (pr->State()) {
-        case StateType::kStateReplicate:
-          auto last = m->entries().rbegin()->index();
-          pr->OptimisticUpdate(last);
-          pr->GetInflights()->Add(last);
-          break;
-        case StateType::kStateProbe:
-          pr->SetProbeSent(true);
-          break;
-        default:
-          // TODO(JT): add StateTypeName
-          LOG_FATAL("%llu is sending append in unhandled state %s", id_,
-                    pr->State());
-          break;
+      if (pr->State() == StateType::kStateReplicate) {
+        auto last = m->entries().rbegin()->index();
+        pr->OptimisticUpdate(last);
+        pr->GetInflights()->Add(last);
+      } else if (pr->State() == StateType::kStateProbe) {
+        pr->SetProbeSent(true);
+      } else {
+        // TODO(JT): add StateTypeName
+        LOG_FATAL("%llu is sending append in unhandled state %s", id_,
+                  pr->State());
       }
     }
   }
@@ -411,7 +409,7 @@ void Raft::Reset(uint64_t term) {
   trk_.Visit([this](uint64_t id, ProgressPtr& pr) {
     pr =
         std::make_shared<Progress>(GetRaftLog()->LastIndex() + 1, 0,
-                                   GetTracker().MaxInflight(), pr->IsLearner());
+                                   GetTracker().MaxInflight(), pr->IsLearner(), false);
     if (id == ID()) {
       pr->SetMatch(GetRaftLog()->LastIndex());
     }
@@ -1573,6 +1571,7 @@ bool Raft::Restore(raftpb::Snapshot* s) {
     // This should never happen. Either there's a bug in our config change
     // handling or the client corrupted the conf change.
     LOG_FATAL("unable to restore config %s", status.Str());
+    return false;
   }
 
   auto cs2 = SwitchToConfig(cfg, prs);
@@ -1587,6 +1586,7 @@ bool Raft::Restore(raftpb::Snapshot* s) {
       "[index: %llu, term: %llu]",
       id_, raft_log_->Committed(), raft_log_->LastIndex(),
       raft_log_->LastTerm(), s->metadata().index(), s->metadata().term());
+  return true;
 }
 
 bool Raft::Promotable() {
@@ -1594,7 +1594,7 @@ bool Raft::Promotable() {
   return pr != nullptr && !pr->IsLearner() && !raft_log_->HasPendingSnapshot();
 }
 
-raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2& cc) {
+raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2&& cc) {
   auto [cfg, prs, status] = [this, &cc]() {
     auto changer = Changer(trk_, raft_log_->LastIndex());
     if (LeaveJoint(cc)) {

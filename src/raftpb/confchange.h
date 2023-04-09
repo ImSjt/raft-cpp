@@ -33,10 +33,10 @@ class ConfChangeI {
 
   bool IsNull() { return !cc_.has_value() && !cc_v2_.has_value(); }
 
-  const raftpb::ConfChangeV2& AsV2();
-  std::tuple<const raftpb::ConfChange&, bool> AsV1();
+  raftpb::ConfChangeV2 AsV2() const;
+  std::tuple<raftpb::ConfChange, bool> AsV1() const;
 
-  std::tuple<raftpb::EntryType, std::string, bool> Marshal();
+  std::tuple<raftpb::EntryType, std::string, bool> Marshal() const;
 
  private:
   std::optional<raftpb::ConfChange> cc_;

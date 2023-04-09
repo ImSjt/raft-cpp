@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 
 #include "log.h"
 #include "quorum/quorum.h"
@@ -58,7 +59,7 @@ struct Ready {
 	// The current volatile state of a Node.
 	// SoftState will be nil if there is no update.
 	// It is not required to consume or store SoftState.
-	SoftState soft_state;
+	std::optional<SoftState> soft_state;
 
 	// The current state of a Node to be saved to stable storage BEFORE
 	// Messages are sent.
@@ -69,7 +70,7 @@ struct Ready {
 	// when its applied index is greater than the index in ReadState.
 	// Note that the readState will be returned when raft receives msgReadIndex.
 	// The returned is only valid for the request that requested to read.
-  std::vector<std::shared_ptr<ReadState>> read_states;
+  std::deque<ReadState> read_states;
 
 	// entries specifies entries to be saved to stable storage BEFORE
 	// Messages are sent.
@@ -105,6 +106,8 @@ const std::string& CampaignTypeName(CampaignType t);
 // ErrProposalDropped is returned when the proposal is ignored by some cases,
 // so that the proposer can be notified and fail fast.
 const char* const kErrProposalDropped = "raft proposal dropped";
+
+bool IsEmptyHardState(const raftpb::HardState& st);
 
 class Raft {
  public:
@@ -204,7 +207,7 @@ class Raft {
     Status Validate();
   };
 
-  std::unique_ptr<Raft> New(Config& c);
+  static std::unique_ptr<Raft> New(Config& c);
 
   Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log);
 
@@ -258,6 +261,9 @@ class Raft {
   bool AppendEntry(const EntryPtr& e);
   bool AppendEntry(const EntryPtrs& es);
 
+  void Tick() { tick_(); }
+  void TickQuiesced() { election_elapsed_++; }
+
   // TickElection is run by followers and candidates after election_timeout_.
   void TickElection();
 
@@ -293,8 +299,6 @@ class Raft {
 
   void HandleSnapshot(MsgPtr m);
 
-  void HandleSnapshot(MsgPtr m);
-
   // Restore recovers the state machine from a snapshot. It restores the log and
   // the configuration of state machine. If this method returns false, the
   // snapshot was ignored, either because it was obsolete or because of an
@@ -305,7 +309,7 @@ class Raft {
   // which is true when its own id is in progress list.
   bool Promotable();
 
-  raftpb::ConfState ApplyConfChange(raftpb::ConfChangeV2& cc);
+  raftpb::ConfState ApplyConfChange(raftpb::ConfChangeV2&& cc);
 
   // SwitchToConfig reconfigures this node to use the provided configuration. It
   // updates the in-memory state and, when necessary, carries out additional
@@ -361,9 +365,17 @@ class Raft {
   uint64_t Term() const { return term_; }
 
   const ProgressTracker& GetTracker() const { return trk_; }
+  ProgressTracker& GetTracker() { return trk_; }
   const RaftLog* GetRaftLog() const { return raft_log_.get(); }
 
   uint64_t ID() const { return id_; }
+
+  std::deque<MsgPtr> Msgs() const { return msgs_; }
+
+  const std::deque<ReadState>& GetReadStates() const { return read_states_; }
+  void ClearReadStates() { read_states_.clear(); }
+
+  void ClearMsgs() { msgs_.clear(); }
 
  private:
   uint64_t id_;

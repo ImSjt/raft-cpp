@@ -32,6 +32,7 @@ namespace craft {
 // certain State. All of this isn't ideal.
 class Progress {
  public:
+  Progress() = default;
   Progress(uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active);
 
   // ResetState moves the Progress into the specified State, resetting
@@ -107,6 +108,18 @@ class Progress {
   Inflights* GetInflights() { return inflights_.get(); }
 
   std::string String() const;
+
+  std::shared_ptr<Progress> Clone() {
+    auto pr = std::make_shared<Progress>();
+    pr->match_ = match_;
+    pr->next_ = next_;
+    pr->state_ = state_;
+    pr->pending_snapshot_ = pending_snapshot_;
+    pr->recent_active_ = recent_active_;
+    pr->probe_sent_ = probe_sent_;
+    pr->is_learner_ = is_learner_;
+    return pr;
+  }
 
  private:
   uint64_t match_, next_;
