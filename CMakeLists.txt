@@ -93,8 +93,12 @@ target_sources(craft
     "src/tracker/progress.h"
     "src/tracker/tracker.cc"
     "src/tracker/tracker.h"
+    "src/tracker/state.cc"
+    "src/tracker/state.h"
     "src/util.cc"
     "src/util.h"
+    "src/read_only.cc"
+    "src/read_only.h"
     "src/raft.cc"
     "src/raft.h"
     "src/rawnode.cc"
@@ -117,13 +121,17 @@ function(craft_test test_file)
     target_link_libraries("${test_target_name}" gtest gtest_main craft)
 
     add_test(NAME "${test_target_name}" COMMAND "${test_target_name}")
-    
+
 endfunction(craft_test)
 
 # craft_test("src/storage_test.cc")
 # craft_test("src/log_unstable_test.cc")
 # craft_test("src/log_test.cc")
-# craft_test("src/quorum/majority_test.cc")
-# craft_test("src/quorum/joint_test.cc")
-# craft_test("src/tracker/inflights_test.cc")
-# craft_test("src/tracker/progress_test.cc")
+craft_test("src/quorum/quick_test.cc")
+craft_test("src/quorum/majority_test.cc")
+craft_test("src/quorum/joint_test.cc")
+craft_test("src/tracker/inflights_test.cc")
+craft_test("src/tracker/progress_test.cc")
+craft_test("src/raftpb/confstate_test.cc")
+craft_test("src/raftpb/confchange_test.cc")
+craft_test("src/confchange/cquick_test.cc")

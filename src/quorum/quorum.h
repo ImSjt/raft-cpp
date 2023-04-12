@@ -32,9 +32,9 @@ class AckedIndexer {
 
 class MapAckIndexer : public AckedIndexer {
  public:
-  MapAckIndexer(const std::map<uint64_t, Index> &indexer)
+  MapAckIndexer(const std::map<uint64_t, Index>& indexer)
       : map_ack_indexer_(indexer) {}
-  MapAckIndexer(std::map<uint64_t, Index> &&indexer)
+  MapAckIndexer(std::map<uint64_t, Index>&& indexer)
       : map_ack_indexer_(std::move(indexer)) {}
 
   std::tuple<Index, bool> AckedIndex(uint64_t voter_id) const {

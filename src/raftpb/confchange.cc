@@ -85,16 +85,15 @@ std::tuple<bool, bool> EnterJoint(raftpb::ConfChangeV2& cc) {
 
 bool LeaveJoint(raftpb::ConfChangeV2& cc) {
   // NB: c is already a copy.
-  // TODO(JT): check
+  static raftpb::ConfChangeV2 empty_cc;
   cc.clear_context();
-  return cc.changes().empty();
+  return cc.changes().empty() && cc.context().empty() && (cc.transition() == empty_cc.transition());
 }
 
 std::tuple<std::vector<raftpb::ConfChangeSingle>, Status> ConfChangesFromString(
     const std::string& s) {
-  // TODO(JT): trim space
   std::vector<raftpb::ConfChangeSingle> ccs;
-  auto tokens = Util::Split(s, ' ');
+  auto tokens = Util::Split(Util::Trim(s, ' '), ' ');
   if (!tokens.empty() && tokens[0] == "") {
     tokens.clear();
   }
@@ -116,7 +115,7 @@ std::tuple<std::vector<raftpb::ConfChangeSingle>, Status> ConfChangesFromString(
     }
     uint64_t id;
     try {
-      id = std::strtoull(token.c_str()+1, nullptr, 10);
+      id = std::strtoull(token.data()+1, nullptr, 10);
     } catch (const std::exception& e) {
       return std::make_tuple(std::vector<raftpb::ConfChangeSingle>(), Status::Error("unknow token %s", e.what()));
     }

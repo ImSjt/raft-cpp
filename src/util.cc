@@ -48,14 +48,39 @@ MsgPtr Util::MakeMsg(const EntryPtrs& ents) {
   return m;
 }
 
-std::vector<std::string> Util::Split(const std::string& s, char delimiter) {
-  std::vector<std::string> tokens;
-  std::string token;
-  // std::istringstream token_stream(s);
-  // while (std::getline(token_stream, token, delimiter)) {
-  //   tokens.push_back(token);
-  // }
-  return tokens;
+std::vector<std::string_view> Util::Split(std::string_view str, char delimiter) {
+  std::vector<std::string_view> substrings;
+  size_t start = 0;
+  size_t end = str.find(delimiter);
+  while (end != std::string::npos) {
+    substrings.push_back(str.substr(start, end - start));
+    start = end + 1;
+    end = str.find(delimiter, start);
+  }
+  substrings.push_back(str.substr(start));
+  return substrings;
+}
+
+std::vector<std::string> Util::Split(const std::string& str, char delimiter) {
+  std::vector<std::string> substrings;
+  size_t start = 0;
+  size_t end = str.find(delimiter);
+  while (end != std::string::npos) {
+    substrings.push_back(str.substr(start, end - start));
+    start = end + 1;
+    end = str.find(delimiter, start);
+  }
+  substrings.push_back(str.substr(start));
+  return substrings;
+}
+
+std::string Util::Trim(const std::string& str, char c) {
+  auto start = str.find_first_not_of(c);
+  auto end = str.find_last_not_of(c);
+  if (start == std::string::npos || end == std::string::npos) {
+    return "";
+  }
+  return str.substr(start, end - start + 1);
 }
 
 bool Util::IsLocalMsg(raftpb::MessageType msgt) {

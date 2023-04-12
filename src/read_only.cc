@@ -24,17 +24,18 @@ void ReadOnly::AddRequest(uint64_t index, MsgPtr m) {
   if (pending_read_index_.count(s) != 0) {
     return;
   }
-  pending_read_index_.emplace(std::make_pair(s, ReadIndexStatus{
-    .req = m,
-    .index = index,
-  }));
+  auto read_index_status = std::shared_ptr<ReadIndexStatus>();
+  read_index_status->req = m;
+  read_index_status->index = index;
+  pending_read_index_.emplace(std::make_pair(s, read_index_status));
   read_index_queue_.emplace_back(s);
 }
 
 const std::map<uint64_t, bool>& ReadOnly::RecvAck(uint64_t id, const std::string& context) {
   auto it = pending_read_index_.find(context);
   if (it == pending_read_index_.end()) {
-    return std::map<uint64_t, bool>();
+    static std::map<uint64_t, bool> empty_acks;
+    return empty_acks;
   }
   it->second->acks[id] = true;
   return it->second->acks;

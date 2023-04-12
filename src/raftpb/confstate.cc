@@ -36,7 +36,8 @@ bool operator==(const raftpb::ConfState& cs1, const raftpb::ConfState& cs2) {
   return equal(c_cs1.voters(), c_cs2.voters()) &&
          equal(c_cs1.learners(), c_cs2.learners()) &&
          equal(c_cs1.voters_outgoing(), c_cs2.voters_outgoing()) &&
-         equal(c_cs1.learners_next(), c_cs2.learners_next());
+         equal(c_cs1.learners_next(), c_cs2.learners_next()) &&
+         c_cs1.auto_leave() == c_cs2.auto_leave();
 }
 
 }  // namespace craft

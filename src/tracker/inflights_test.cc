@@ -1,107 +1,167 @@
-#include "gtest/gtest.h"
-
-#include <vector>
-#include <set>
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include <map>
 #include <memory>
+#include <set>
+#include <vector>
 
-#define private public
-#define protected public
+#include "gtest/gtest.h"
 #include "tracker/inflights.h"
-#undef private
-#undef protected
 
-class InflightsTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-
-    }
-
-    // void TearDown() override {}
-
-// protected:
-
-};
-
-static craft::Inflights make_inflights(int32_t start, int32_t count, int32_t size, std::vector<uint64_t> buffer) {
-    craft::Inflights in(size);
-    
-    in.start_ = start;
-    in.count_ = count;
-    in.buffer_ = buffer;
-
-    return in;
+static craft::Inflights makeInflights(int32_t start, int32_t count,
+                                      int32_t size, std::vector<uint64_t> buffer) {
+  craft::Inflights in(size);
+  in.SetStrat(start);
+  in.SetCount(count);
+  in.SetBuffer(buffer);
+  return in;
 }
 
-TEST_F(InflightsTest, Add) {
-    struct Test {
-        std::string name_;
-        craft::Inflights in_;
-        std::vector<uint64_t> add_;
-        craft::Inflights win_;
-    };
+TEST(Inflights, Add) {
+	// no rotating case
+  craft::Inflights in(10);
+  for (size_t i = 0; i < 10; i++) {
+    in.Add(i);
+  }
 
-    std::vector<Test> tests = {
-        {"test0", make_inflights(0, 0, 10, std::vector<uint64_t>(10)), {0, 1, 2, 3, 4}, make_inflights(0, 5, 10, {0, 1, 2, 3, 4, 0, 0, 0, 0, 0})},
-        {"test1", make_inflights(0, 0, 10, std::vector<uint64_t>(10)), {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, make_inflights(0, 10, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9})},
-        {"test2", make_inflights(5, 0, 10, std::vector<uint64_t>(10)), {0, 1, 2, 3, 4}, make_inflights(5, 5, 10, {0, 0, 0, 0, 0, 0, 1, 2, 3, 4})},
-        {"test3", make_inflights(5, 0, 10, std::vector<uint64_t>(10)), {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, make_inflights(5, 10, 10, {5, 6, 7, 8, 9, 0, 1, 2, 3, 4})},
-    };
+  in.FreeLE(4);
 
-    for (Test& test : tests) {
-        for (uint64_t i : test.add_) {
-            test.in_.Add(i);
-        }
+  {
+    //                                                     ↓------------
+    auto win = makeInflights(5, 5, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
 
-        EXPECT_EQ(test.in_.start_, test.win_.start_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.count_, test.win_.count_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.size_, test.win_.size_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.buffer_, test.win_.buffer_) << "#test case: " << test.name_;
-    }
+  in.FreeLE(8);
+
+  {
+    //                                                             ↓
+    auto win = makeInflights(9, 1, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
+
+  // rotating case
+  for (uint64_t i = 10; i < 15; i++) {
+    in.Add(i);
+  }
+
+  in.FreeLE(12);
+
+  {
+    //                                              ↓-----
+    auto win = makeInflights(3, 2, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
+
+  in.FreeLE(14);
+
+  {
+    //                                  ↓-----
+    auto win = makeInflights(0, 0, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
 }
 
-TEST_F(InflightsTest, FreeLE) {
-    struct Test {
-        std::string name_;
-        craft::Inflights in_;
-        uint64_t free_to_;
-        craft::Inflights win_;
-    };
+TEST(Inflights, FreeLE) {
+  // no rotating case
+  craft::Inflights in(10);
+  for (uint64_t i = 0; i < 10; i++) {
+    in.Add(i);
+  }
 
-    std::vector<Test> tests = {
-        {"test0", make_inflights(0, 10, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}), 4, make_inflights(5, 5, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9})},
-        {"test1", make_inflights(0, 10, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}), 8, make_inflights(9, 1, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9})},
-        {"test2", make_inflights(9, 6, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9}), 12, make_inflights(3, 2, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9})},
-        {"test3", make_inflights(3, 2, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9}), 14, make_inflights(0, 0, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9})},
-    };
+  in.FreeLE(4);
 
-    for (Test& test : tests) {
-        test.in_.FreeLE(test.free_to_);
+  {
+    //                                                 ↓------------
+    auto win = makeInflights(5, 5, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
 
-        EXPECT_EQ(test.in_.start_, test.win_.start_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.count_, test.win_.count_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.size_, test.win_.size_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.buffer_, test.win_.buffer_) << "#test case: " << test.name_;
-    }
+  in.FreeLE(8);
+
+  {
+    //                                                             ↓
+    auto win = makeInflights(9, 1, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
+
+  // rotating case
+  for (uint64_t i = 10; i < 15; i++) {
+    in.Add(i);
+  }
+
+  in.FreeLE(12);
+
+  {
+    //                                              ↓-----
+    auto win = makeInflights(3, 2, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
+
+  in.FreeLE(14);
+  {
+    //                                              ↓-----
+    auto win = makeInflights(0, 0, 10, {10, 11, 12, 13, 14, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
 }
 
-TEST_F(InflightsTest, FreeFirstOne) {
-    struct Test {
-        std::string name_;
-        craft::Inflights in_;
-        craft::Inflights win_;
-    };
+TEST(Inflights, FreeFirstOne) {
+  craft::Inflights in(10);
+  for (uint64_t i = 0; i < 10; i++) {
+    in.Add(i);
+  }
 
-    std::vector<Test> tests = {
-        {"test0", make_inflights(0, 10, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}), make_inflights(1, 9, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9})}
-    };
+  in.FreeFirstOne();
 
-    for (Test& test : tests) {
-        test.in_.FreeFirstOne();
+  {
+    //                                     ↓------------------------
+    auto win = makeInflights(1, 9, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    ASSERT_EQ(in.Start(), win.Start());
+    ASSERT_EQ(in.Count(), win.Count());
+    ASSERT_EQ(in.Size(), win.Size());
+    ASSERT_EQ(in.Buffer(), win.Buffer());
+  }
+}
 
-        EXPECT_EQ(test.in_.start_, test.win_.start_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.count_, test.win_.count_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.size_, test.win_.size_) << "#test case: " << test.name_;
-        EXPECT_EQ(test.in_.buffer_, test.win_.buffer_) << "#test case: " << test.name_;
-    }
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

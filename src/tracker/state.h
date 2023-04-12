@@ -25,14 +25,16 @@ enum StateType : uint64_t {
   // its last index. In the ideal (and common) case, only one round of probing
   // is necessary as the follower will react with a hint. Followers that are
   // probed over extended periods of time are often offline.
-  kStateProbe,
+  kProbe,
   // StateReplicate is the state steady in which a follower eagerly receives
   // log entries to append to its log.
-  kStateReplicate,
+  kReplicate,
   // StateSnapshot indicates a follower that needs log entries not available
   // from the leader's Raft log. Such a follower needs a full snapshot to
   // return to StateReplicate.
-  kStateSnapshot,
+  kSnapshot,
 };
+
+const char* StateTypeName(StateType state);
 
 }  // namespace craft

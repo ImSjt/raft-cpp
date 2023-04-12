@@ -30,6 +30,7 @@ namespace craft {
 // configuration.
 class Changer {
  public:
+  Changer() = default;
   Changer(const ProgressTracker& tracker, uint64_t last_index)
     : tracker_(tracker), last_index_(last_index) {}
 

@@ -90,6 +90,14 @@ class ProgressTracker {
     // as soon as possible.
     std::set<uint64_t> learners_next_;
 
+    bool operator==(const Config& other) const {
+      return voters_.Incoming().IDs() == other.voters_.Incoming().IDs() &&
+        voters_.Outgoing().IDs() == other.voters_.Outgoing().IDs() &&
+        auto_leave_ == other.auto_leave_ &&
+        learners_ == other.learners_ &&
+        learners_next_ == other.learners_next_;
+    }
+
     bool Joint() const { return voters_.Outgoing().Size() > 0; }
     std::string Describe() const { return ""; }
   };

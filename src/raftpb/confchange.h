@@ -25,6 +25,8 @@ namespace craft {
 class ConfChangeI {
  public:
   ConfChangeI() = default;
+  ConfChangeI(const raftpb::ConfChange& cc) : cc_(cc) {}
+  ConfChangeI(const raftpb::ConfChangeV2& cc) : cc_v2_(cc) {}
   ConfChangeI(raftpb::ConfChange&& cc) : cc_(std::move(cc)) {}
   ConfChangeI(raftpb::ConfChangeV2&& cc) : cc_v2_(std::move(cc)) {}
 

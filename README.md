@@ -16,13 +16,8 @@ git submodule rm xxx
 
 
 TODO
-- glog // done
-- quorum // done
-- google fmt
-- tracker // done
-- confchange
-- storage
-- unstable
-- raftlog
-- raft
-- readonly
+- 使用glog
+- status抽象状态码？
+- 补充测试
+
+

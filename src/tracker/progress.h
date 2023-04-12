@@ -85,12 +85,15 @@ class Progress {
   // In normal operation, this is false. A throttled node will be contacted less
   // frequently until it has reached a state in which it's able to accept a
   // steady stream of log entries again.
-  bool IsPaused();
+  bool IsPaused() const;
 
   uint64_t Match() const { return match_; }
   void SetMatch(uint64_t match) { match_ = match; }
 
   uint64_t Next() const { return next_; }
+  void SetNext(uint64_t next) { next_ = next; }
+
+  void SetState(StateType state) { state_ = state; }
   StateType State() const { return state_; }
 
   uint64_t PendingSnapshot() const { return pending_snapshot_; }
@@ -106,6 +109,9 @@ class Progress {
   void SetIsLearner(bool v) { is_learner_ = v; }
 
   Inflights* GetInflights() { return inflights_.get(); }
+  void SetInflights(std::unique_ptr<Inflights>&& inflights) {
+    inflights_ = std::move(inflights);
+  }
 
   std::string String() const;
 

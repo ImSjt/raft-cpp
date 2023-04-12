@@ -266,6 +266,30 @@ uint64_t RaftLog::FindConflict(const EntryPtrs& ents) const {
   return 0;
 }
 
+uint64_t RaftLog::FindConflictByTerm(uint64_t index, uint64_t term) {
+  auto li = LastIndex();
+  if (index > li) {
+		// NB: such calls should not exist, but since there is a straightfoward
+		// way to recover, do it.
+		//
+		// It is tempting to also check something about the first index, but
+		// there is odd behavior with peers that have no log, in which case
+		// lastIndex will return zero and firstIndex will return one, which
+		// leads to calls with an index of zero into this method.
+    LOG_WARNING("index(%llu) is out of range [0, lastIndex(%llu)] in findConflictByTerm",
+      index, li);
+    return index;
+  }
+  while (1) {
+    auto [log_term, status] = Term(index);
+    if (log_term <= term || !status.IsOK()) {
+      break;
+    }
+    index--;
+  }
+  return index;
+}
+
 std::tuple<EntryPtrs, Status> RaftLog::Slice(uint64_t lo, uint64_t hi,
                                              uint64_t max_size) const {
   Status status = MustCheckOutOfBounds(lo, hi);

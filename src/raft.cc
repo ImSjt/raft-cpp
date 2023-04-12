@@ -291,11 +291,11 @@ bool Raft::MaybeSendAppend(uint64_t to, bool send_if_empty) {
     }
     m->set_commit(raft_log_->Committed());
     if (!m->entries().empty()) {
-      if (pr->State() == StateType::kStateReplicate) {
+      if (pr->State() == StateType::kReplicate) {
         auto last = m->entries().rbegin()->index();
         pr->OptimisticUpdate(last);
         pr->GetInflights()->Add(last);
-      } else if (pr->State() == StateType::kStateProbe) {
+      } else if (pr->State() == StateType::kProbe) {
         pr->SetProbeSent(true);
       } else {
         // TODO(JT): add StateTypeName
@@ -1118,7 +1118,7 @@ Status Raft::StepLeader(MsgPtr m) {
         if (pr->MaybeDecrTo(m->index(), next_probe_idx)) {
           LOG_DEBUG("%llu decreased progress of %llu to [%s]", id_, m->from(),
                     pr->String().c_str());
-          if (pr->State() == StateType::kStateReplicate) {
+          if (pr->State() == StateType::kReplicate) {
             pr->BecomeProbe();
           }
           SendAppend(m->from());
@@ -1126,14 +1126,14 @@ Status Raft::StepLeader(MsgPtr m) {
       } else {
         auto old_paused = pr->IsPaused();
         if (pr->MaybeUpdate(m->index())) {
-          if (pr->State() == StateType::kStateProbe) {
+          if (pr->State() == StateType::kProbe) {
             pr->BecomeReplicate();
-          } else if (pr->State() == StateType::kStateSnapshot &&
+          } else if (pr->State() == StateType::kSnapshot &&
                      pr->Match() >= pr->PendingSnapshot()) {
             // LOG_DEBUG();
             pr->BecomeProbe();
             pr->BecomeReplicate();
-          } else if (pr->State() == StateType::kStateReplicate) {
+          } else if (pr->State() == StateType::kReplicate) {
             pr->GetInflights()->FreeLE(m->index());
           }
 
@@ -1171,7 +1171,7 @@ Status Raft::StepLeader(MsgPtr m) {
       pr->SetProbeSent(false);
 
       // free one slot for the full inflights window to allow progress.
-      if (pr->State() == StateType::kStateReplicate &&
+      if (pr->State() == StateType::kReplicate &&
           pr->GetInflights()->Full()) {
         pr->GetInflights()->FreeFirstOne();
       }
@@ -1197,7 +1197,7 @@ Status Raft::StepLeader(MsgPtr m) {
       }
     }
     case raftpb::MessageType::MsgSnapStatus: {
-      if (pr->State() != StateType::kStateSnapshot) {
+      if (pr->State() != StateType::kSnapshot) {
         return Status::OK();
       }
       // TODO(tbg): this code is very similar to the snapshot handling in
@@ -1228,7 +1228,7 @@ Status Raft::StepLeader(MsgPtr m) {
     case raftpb::MessageType::MsgUnreachable: {
       // During optimistic replication, if the remote becomes unreachable,
       // there is huge probability that a MsgApp is lost.
-      if (pr->State() == StateType::kStateReplicate) {
+      if (pr->State() == StateType::kReplicate) {
         pr->BecomeProbe();
       }
       LOG_DEBUG(
@@ -1801,4 +1801,4 @@ void Raft::SendMsgReadIndexResponse(MsgPtr m) {
   }
 }
 
-};  // namespace craft
+}  // namespace craft

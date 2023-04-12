@@ -34,7 +34,6 @@ class Inflights {
   // the receiver.
   std::unique_ptr<Inflights> Clone() {
     auto inflights = std::make_unique<Inflights>(*this);
-    // return std::move(inflights);
     return inflights;
   }
 
@@ -55,13 +54,22 @@ class Inflights {
   bool Full() { return count_ == size_; }
 
   // Count returns the number of inflight messages.
-  int32_t Count() { return count_; }
+  int64_t Count() const { return count_; }
 
   // reset frees all inflights.
   void Reset() {
     count_ = 0;
     start_ = 0;
   }
+
+  // for unit test
+  int64_t Start() const { return start_; }
+  void SetStrat(int64_t start) { start_ = start; }
+  void SetCount(int64_t count) { count_ = count; }
+  int64_t Size() const { return size_; }
+  void SetSize(int64_t size) { size_ = size; }
+  const std::vector<uint64_t>& Buffer() const { return buffer_; }
+  void SetBuffer(const std::vector<uint64_t>& buffer) { buffer_ = buffer; }
 
  private:
   // grow the inflight buffer by doubling up to inflights.size. We grow on

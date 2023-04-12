@@ -42,7 +42,10 @@ class Util {
 
   static MsgPtr MakeMsg(const EntryPtrs& ents);
 
-  static std::vector<std::string> Split(const std::string& s, char delimiter);
+  static std::vector<std::string_view> Split(std::string_view str, char delimiter);
+  static std::vector<std::string> Split(const std::string& str, char delimiter);
+
+  static std::string Trim(const std::string& str, char c);
 
   static size_t PayloadSize(const EntryPtr& e) { return e->data().size(); }
 
