@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 
 #include "quorum/joint.h"
 #include "raftpb/raft.pb.h"
@@ -44,7 +45,7 @@ class ProgressTracker {
     // incoming configuration should be carried out automatically by Raft when
     // this is possible. If false, the configuration will be joint until the
     // application initiates the transition manually.
-    bool auto_leave_;
+    bool auto_leave_ = false;
     // Learners is a set of IDs corresponding to the learners active in the
     // current configuration.
     //
@@ -99,7 +100,21 @@ class ProgressTracker {
     }
 
     bool Joint() const { return voters_.Outgoing().Size() > 0; }
-    std::string Describe() const { return ""; }
+
+    std::string String() const {
+      std::stringstream ss;
+      ss << "voters=" << voters_.String();
+      if (!learners_.empty()) {
+        ss << " learners=" << MajorityConfig(learners_).String();
+      }
+      if (!learners_next_.empty()) {
+        ss << " learners_next=" << MajorityConfig(learners_next_).String();
+      }
+      if (auto_leave_) {
+        ss << " autoleave";
+      }
+      return ss.str();
+    }
   };
 
   using Closure = std::function<void(uint64_t id, ProgressPtr& pr)>;
@@ -112,8 +127,8 @@ class ProgressTracker {
   // IsSingleton returns true if (and only if) there is only one voting member
   // (i.e. the leader) in the current configuration.
   bool IsSingleton() {
-    return config_.voters_.At(0).Size() == 1 &&
-           config_.voters_.At(1).Size() == 0;
+    return config_.voters_.Incoming().Size() == 1 &&
+           config_.voters_.Outgoing().Size() == 0;
   }
 
   // Committed returns the largest log index known to be committed based on what
@@ -158,6 +173,8 @@ class ProgressTracker {
   void SetProgressMap(ProgressMap&& progress) {
     progress_ = std::move(progress);
   }
+
+  const std::map<uint64_t, bool>& Votes() const { return votes_; }
 
   int64_t MaxInflight() const { return max_inflight_; }
 

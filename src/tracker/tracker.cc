@@ -55,12 +55,12 @@ const ProgressPtr GetProgress(const ProgressMap& prs, uint64_t id) {
 raftpb::ConfState ProgressTracker::ConfState() {
   raftpb::ConfState conf_state;
 
-  std::vector<uint64_t> voters = config_.voters_.At(0).Slice();
+  std::vector<uint64_t> voters = config_.voters_.Incoming().Slice();
   for (uint64_t voter : voters) {
     conf_state.add_voters(voter);
   }
 
-  std::vector<uint64_t> voters_outgoing = config_.voters_.At(1).Slice();
+  std::vector<uint64_t> voters_outgoing = config_.voters_.Outgoing().Slice();
   for (uint64_t voter : voters_outgoing) {
     conf_state.add_voters_outgoing(voter);
   }

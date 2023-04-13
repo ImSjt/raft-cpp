@@ -33,6 +33,8 @@ class Changer {
   Changer() = default;
   Changer(const ProgressTracker& tracker, uint64_t last_index)
     : tracker_(tracker), last_index_(last_index) {}
+  Changer(const ProgressTracker&& tracker, uint64_t last_index)
+    : tracker_(std::move(tracker)), last_index_(last_index) {}
 
   // EnterJoint verifies that the outgoing (=right) majority config of the joint
   // config is empty and initializes it with a copy of the incoming (=left)
@@ -48,7 +50,7 @@ class Changer {
   //
   // [1]: https://github.com/ongardie/dissertation/blob/master/online-trim.pdf
   std::tuple<ProgressTracker::Config, ProgressMap, Status> EnterJoint(
-      bool auto_leave, const std::vector<raftpb::ConfChangeSingle>& ccs);
+      bool auto_leave, const std::vector<raftpb::ConfChangeSingle>& ccs) const;
 
   // LeaveJoint transitions out of a joint configuration. It is an error to call
   // this method if the configuration is not joint, i.e. if the outgoing
@@ -64,7 +66,7 @@ class Changer {
   // inserted into Learners.
   //
   // [1]: https://github.com/ongardie/dissertation/blob/master/online-trim.pdf
-  std::tuple<ProgressTracker::Config, ProgressMap, Status> LeaveJoint();
+  std::tuple<ProgressTracker::Config, ProgressMap, Status> LeaveJoint() const;
 
   // Simple carries out a series of configuration changes that (in aggregate)
   // mutates the incoming majority config Voters[0] by at most one. This method
@@ -72,18 +74,18 @@ class Changer {
   // zero, or if the configuration is in a joint state (i.e. if there is an
   // outgoing configuration).
   std::tuple<ProgressTracker::Config, ProgressMap, Status> Simple(
-      const std::vector<raftpb::ConfChangeSingle>& ccs);
+      const std::vector<raftpb::ConfChangeSingle>& ccs) const;
 
   // Apply a change to the configuration. By convention, changes to voters are
   // always made to the incoming majority config Voters[0]. Voters[1] is either
   // empty or preserves the outgoing majority configuration while in a joint
   // state.
   Status Apply(ProgressTracker::Config& cfg, ProgressMap& prs,
-               const std::vector<raftpb::ConfChangeSingle>& ccs);
+               const std::vector<raftpb::ConfChangeSingle>& ccs) const;
 
   // MakeVoter adds or promotes the given ID to be a voter in the incoming
   // majority config.
-  void MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id);
+  void MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id) const;
 
   // MakeLearner makes the given ID a learner or stages it to be a learner once
   // an active joint configuration is exited.
@@ -98,16 +100,19 @@ class Changer {
   // simultaneously. Instead, we add the learner to LearnersNext, so that it
   // will be added to Learners the moment the outgoing config is removed by
   // LeaveJoint().
-  void MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id);
+  void MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id) const;
 
   // remove this peer as a voter or learner from the incoming config.
-  void Remove(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id);
+  void Remove(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id) const;
 
   // initProgress initializes a new progress for the given node or learner.
   void InitProgress(ProgressTracker::Config& cfg, ProgressMap& prs, uint64_t id,
-                    bool is_learner);
+                    bool is_learner) const;
 
   ProgressTracker& GetProgressTracker() { return tracker_; }
+
+  uint64_t LastIndex() const { return last_index_; }
+  void SetLastIndex(uint64_t last_index) { last_index_ = last_index; }
 
  private:
   // checkInvariants makes sure that the config and progress are compatible with
@@ -126,7 +131,7 @@ class Changer {
   std::tuple<ProgressTracker::Config, ProgressMap, Status> CheckAndReturn(
       ProgressTracker::Config&& cfg, ProgressMap&& prs) const;
 
-  int Symdiff(const std::set<uint64_t>& l, const std::set<uint64_t>& r);
+  int Symdiff(const std::set<uint64_t>& l, const std::set<uint64_t>& r) const;
 
   ProgressTracker tracker_;
   uint64_t last_index_;

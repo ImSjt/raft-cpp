@@ -92,6 +92,7 @@ static std::tuple<std::vector<raftpb::ConfChangeSingle>, std::vector<raftpb::Con
     raftpb::ConfChangeSingle cc;
     cc.set_type(raftpb::ConfChangeType::ConfChangeAddLearnerNode);
     cc.set_node_id(id);
+    incoming.emplace_back(std::move(cc));
   }
   return std::make_tuple(std::move(outgoing), std::move(incoming));
 }

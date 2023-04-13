@@ -22,7 +22,7 @@ static std::tuple<ProgressTracker::Config, ProgressMap, Status> err(Status&& sta
 }
 
 std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::EnterJoint(
-    bool auto_leave, const std::vector<raftpb::ConfChangeSingle>& ccs) {
+    bool auto_leave, const std::vector<raftpb::ConfChangeSingle>& ccs) const {
   auto [cfg, prs, status] = CheckAndCopy();
   if (!status.IsOK()) {
     return err(std::move(status));
@@ -51,7 +51,7 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::EnterJoint(
   return CheckAndReturn(std::move(cfg), std::move(prs));
 }
 
-std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::LeaveJoint() {
+std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::LeaveJoint() const {
   auto [cfg, prs, status] = CheckAndCopy();
   if (!status.IsOK()) {
     return err(std::move(status));
@@ -60,7 +60,7 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::LeaveJoint() {
     return err(Status::Error("can't leave a non-joint config"));
   }
   if (cfg.voters_.Outgoing().Size() == 0) {
-    return err(Status::Error("configuration is not joint: %s", cfg.Describe().c_str()));
+    return err(Status::Error("configuration is not joint: %s", cfg.String().c_str()));
   }
   for (auto id : cfg.learners_next_) {
     cfg.learners_.insert(id);
@@ -82,7 +82,7 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::LeaveJoint() {
 }
 
 std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::Simple(
-    const std::vector<raftpb::ConfChangeSingle>& ccs) {
+    const std::vector<raftpb::ConfChangeSingle>& ccs) const {
   auto [cfg, prs, status] = CheckAndCopy();
   if (!status.IsOK()) {
     return err(std::move(status));
@@ -102,7 +102,7 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::Simple(
 }
 
 Status Changer::Apply(ProgressTracker::Config& cfg, ProgressMap& prs,
-                      const std::vector<raftpb::ConfChangeSingle>& ccs) {
+                      const std::vector<raftpb::ConfChangeSingle>& ccs) const {
   for (auto cc : ccs) {
     if (cc.node_id() == 0) {
 			// etcd replaces the NodeID with zero if it decides (downstream of
@@ -121,6 +121,7 @@ Status Changer::Apply(ProgressTracker::Config& cfg, ProgressMap& prs,
       Remove(cfg, prs, cc.node_id());
       break;
     case raftpb::ConfChangeType::ConfChangeUpdateNode:
+      break;
     default:
       return Status::Error("unexpected conf type %d", cc.type());
     }
@@ -132,7 +133,7 @@ Status Changer::Apply(ProgressTracker::Config& cfg, ProgressMap& prs,
 }
 
 void Changer::MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs,
-                        uint64_t id) {
+                        uint64_t id) const {
   auto pr = GetProgress(prs, id);
   if (!pr) {
     InitProgress(cfg, prs, id, false);
@@ -145,7 +146,7 @@ void Changer::MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs,
 }
 
 void Changer::MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs,
-                          uint64_t id) {
+                          uint64_t id) const {
   auto pr = GetProgress(prs, id);
   if (!pr) {
     InitProgress(cfg, prs, id, true);
@@ -172,7 +173,7 @@ void Changer::MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs,
 }
 
 void Changer::Remove(ProgressTracker::Config& cfg, ProgressMap& prs,
-                     uint64_t id) {
+                     uint64_t id) const {
   auto pr = GetProgress(prs, id);
   if (!pr) {
     return;
@@ -188,7 +189,7 @@ void Changer::Remove(ProgressTracker::Config& cfg, ProgressMap& prs,
 }
 
 void Changer::InitProgress(ProgressTracker::Config& cfg, ProgressMap& prs,
-                           uint64_t id, bool is_learner) {
+                           uint64_t id, bool is_learner) const {
   if (!is_learner) {
     cfg.voters_.Incoming().Add(id);
   } else {
@@ -286,7 +287,11 @@ Status Changer::CheckInvariants(const ProgressTracker::Config& cfg,
 std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::CheckAndCopy() const {
   auto cfg = tracker_.GetConfig();
   auto prs = tracker_.GetProgressMap();
-  return CheckAndReturn(std::move(cfg), std::move(prs));
+  ProgressMap prs_copy;
+  for (auto& p : prs) {
+    prs_copy[p.first] = p.second->Clone();
+  }
+  return CheckAndReturn(std::move(cfg), std::move(prs_copy));
 }
 
 std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::CheckAndReturn(
@@ -298,7 +303,7 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::CheckAndReturn
   return std::make_tuple(std::move(cfg), std::move(prs), Status::OK());
 }
 
-int Changer::Symdiff(const std::set<uint64_t>& l, const std::set<uint64_t>& r) {
+int Changer::Symdiff(const std::set<uint64_t>& l, const std::set<uint64_t>& r) const {
   int n = 0;
   // count elems in l but not in r
   for (auto id : l) {

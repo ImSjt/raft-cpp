@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <sstream>
 
 namespace craft {
 
@@ -128,7 +129,17 @@ void MajorityConfig::IDs(std::set<uint64_t>& ids) const {
 }
 
 std::string MajorityConfig::String() const {
-  return "";
+  std::stringstream ss;
+  auto sl = Slice();
+  ss << "(";
+  for (size_t i = 0; i < sl.size(); i++) {
+    if (i > 0) {
+      ss << " ";
+    }
+    ss << sl[i];
+  }
+  ss << ")";
+  return ss.str();
 }
 
 std::string MajorityConfig::Describe(const AckedIndexer& l) const {

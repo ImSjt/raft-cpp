@@ -1623,7 +1623,7 @@ raftpb::ConfState Raft::SwitchToConfig(const ProgressTracker::Config& cfg,
   trk_.SetConfig(cfg);
   trk_.SetProgressMap(prs);
 
-  LOG_INFO("%d switched to configuration %s", id_, cfg.Describe().c_str());
+  LOG_INFO("%d switched to configuration %s", id_, cfg.String().c_str());
 
   auto cs = trk_.ConfState();
   auto pr = trk_.GetProgress(id_);

@@ -20,7 +20,7 @@ namespace craft {
 const char* StateTypeName(StateType state) {
   switch (state) {
     case StateType::kProbe:
-      return "StateSnapshot";
+      return "StateProbe";
     case StateType::kReplicate:
       return "StateReplicate";
     case StateType::kSnapshot:

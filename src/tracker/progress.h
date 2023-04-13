@@ -124,6 +124,7 @@ class Progress {
     pr->recent_active_ = recent_active_;
     pr->probe_sent_ = probe_sent_;
     pr->is_learner_ = is_learner_;
+    pr->inflights_ = inflights_->Clone();
     return pr;
   }
 
