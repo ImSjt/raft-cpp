@@ -1,271 +1,319 @@
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "gtest/gtest.h"
+#include "log_unstable.h"
 
-#include <vector>
-
-#define private public
-#define protected public
-#include "craft/log_unstable.h"
-#undef private
-#undef protected
-
-static raftpb::Entry make_entry(uint64_t index, uint64_t term);
-static raftpb::Snapshot *make_snapshot(uint64_t index, uint64_t term);
-
-class UnstableTest : public ::testing::Test
-{
-protected:
-  // void SetUp() override {}
-  // void TearDown() override {}
-};
-
-static raftpb::Entry make_entry(uint64_t index, uint64_t term)
-{
-  raftpb::Entry ent;
-
-  ent.set_index(index);
-  ent.set_term(term);
-
+static craft::EntryPtr makeEntry(uint64_t index, uint64_t term) {
+  auto ent = std::make_shared<raftpb::Entry>();
+  ent->set_index(index);
+  ent->set_term(term);
   return ent;
 }
 
-static raftpb::Snapshot *make_snapshot(uint64_t index, uint64_t term)
-{
-  raftpb::Snapshot *snapshot = new raftpb::Snapshot;
+static craft::SnapshotPtr makeSnapshot(uint64_t index, uint64_t term) {
+  auto snapshot = std::make_shared<raftpb::Snapshot>();
   snapshot->mutable_metadata()->set_index(index);
   snapshot->mutable_metadata()->set_term(term);
-
   return snapshot;
-};
+}
 
-TEST_F(UnstableTest, MaybeFirstIndex)
-{
-  struct Test
-  {
-    std::vector<raftpb::Entry> entries_;
-    uint64_t offset_;
-    raftpb::Snapshot *snap_;
+TEST(Unstable, MaybeFirstIndex) {
+  struct Test {
+    craft::EntryPtrs entries;
+    uint64_t offset;
+    craft::SnapshotPtr snap;
 
-    uint64_t windex_;
+    bool wok;
+    uint64_t windex;
   };
 
   std::vector<Test> tests = {
-      // no snapshot
-      {{make_entry(5, 1)}, 5, nullptr, 0},
-      {{}, 0, nullptr, 0},
-      // has snapshot
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 5},
-      {{}, 5, make_snapshot(4, 1), 5}};
+    // no snapshot
+    {
+      {makeEntry(5, 1)}, 5, nullptr, false, 0,
+    },
+    {
+      {}, 0, nullptr, false, 0,
+    },
+    // has snapshot
+    {
+      {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), true, 5,
+    },
+    {
+      {}, 5, makeSnapshot(4, 1), true, 5,
+    }
+  };
 
-  for (int i = 0; i < tests.size(); i++)
-  {
-    Test &test = tests[i];
-
+  for (auto& tt : tests) {
     craft::Unstable u;
-    u.entries_ = test.entries_;
-    u.offset_ = test.offset_;
-    u.snapshot_.reset(test.snap_);
-
-    uint64_t index = u.MaybeFirstIndex();
-    EXPECT_EQ(index, test.windex_) << "#test case: " << i;
+    u.SetEntries(tt.entries);
+    u.SetOffset(tt.offset);
+    u.SetSnapshot(tt.snap);
+    auto [index, ok] = u.MaybeFirstIndex();
+    ASSERT_EQ(ok, tt.wok);
+    ASSERT_EQ(index, tt.windex);
   }
 }
 
-TEST_F(UnstableTest, LastIndex)
-{
-  struct Test
-  {
-    std::vector<raftpb::Entry> entries_;
-    uint64_t offset_;
-    raftpb::Snapshot *snap_;
+TEST(Unstable, MaybeLastIndex) {
+  struct Test {
+    craft::EntryPtrs entries;
+    uint64_t offset;
+    craft::SnapshotPtr snap;
 
-    uint64_t windex_;
+    bool wok;
+    uint64_t windex;
   };
 
   std::vector<Test> tests = {
-      // last in entries
-      {{make_entry(5, 1)}, 5, nullptr, 5},
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 5},
-      // last in snapshot
-      {{}, 5, make_snapshot(4, 1), 4},
-      // empty unstable
-      {{}, 0, nullptr, 0}};
+    // last in entries
+    {
+      {makeEntry(5, 1)}, 5, nullptr, true, 5,
+    },
+    {
+      {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), true, 5,
+    },
+    // last in snapshot
+    {
+      {}, 5, makeSnapshot(4, 1), true, 4,
+    },
+    // empty unstable
+    {
+      {}, 0, nullptr, false, 0,
+    }
+  };
 
-  for (int i = 0; i < tests.size(); i++)
-  {
-    Test &test = tests[i];
-
+  for (auto& tt : tests) {
     craft::Unstable u;
-    u.entries_ = test.entries_;
-    u.offset_ = test.offset_;
-    u.snapshot_.reset(test.snap_);
-
-    uint64_t index = u.MaybeLastIndex();
-    EXPECT_EQ(index, test.windex_) << "#test case: " << i;
+    u.SetEntries(tt.entries);
+    u.SetOffset(tt.offset);
+    u.SetSnapshot(tt.snap);
+    auto [index, ok] = u.MaybeLastIndex();
+    ASSERT_EQ(ok, tt.wok);
+    ASSERT_EQ(index, tt.windex);
   }
 }
 
-TEST_F(UnstableTest, MaybeTerm)
-{
-  struct Test
-  {
-    std::vector<raftpb::Entry> entries_;
-    uint64_t offset_;
-    raftpb::Snapshot *snap_;
-    uint64_t index_;
+TEST(Unstable, MaybeTerm) {
+  struct Test {
+    craft::EntryPtrs entries;
+    uint64_t offset;
+    craft::SnapshotPtr snap;
+    uint64_t index;
 
-    uint64_t wterm_;
+    bool wok;
+    uint64_t wterm;
   };
 
   std::vector<Test> tests = {
-      // term from entries
-      {{make_entry(4, 1)}, 5, nullptr, 5, 1},
-      {{make_entry(5, 1)}, 5, nullptr, 6, 0},
-      {{make_entry(5, 1)}, 5, nullptr, 4, 0},
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 5, 1},
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 6, 0},
-      // term from snapshot
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 4, 1},
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 3, 0},
-      {{}, 5, make_snapshot(4, 1), 5, 0},
-      {{}, 5, make_snapshot(4, 1), 4, 1},
-      {{}, 0, nullptr, 5, 0}};
+    // term from entries
+    {
+      {makeEntry(5, 1)}, 5, nullptr, 5, true, 1,
+    },
+    {
+      {makeEntry(5, 1)}, 5, nullptr, 6, false, 0,
+    },
+    {
+      {makeEntry(5, 1)}, 5, nullptr, 4, false, 0,
+    },
+    {
+      {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), 5, true, 1,
+    },
+    {
+      {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), 6, false, 0,
+    },
+    // term from snapshot
+    {
+      {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), 4, true, 1,
+    },
+    {
+      {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), 3, false, 0,
+    },
+    {
+      {}, 5, makeSnapshot(4, 1), 5, false, 0,
+    },
+    {
+      {}, 5, makeSnapshot(4, 1), 4, true, 1,
+    },
+    {
+      {}, 0, nullptr, 5, false, 0,
+    }
+  };
 
-  for (int i = 0; i < tests.size(); i++)
-  {
-    Test &test = tests[i];
-
+  for (auto& tt : tests) {
     craft::Unstable u;
-    u.entries_ = test.entries_;
-    u.offset_ = test.offset_;
-    u.snapshot_.reset(test.snap_);
+    u.SetEntries(tt.entries);
+    u.SetOffset(tt.offset);
+    u.SetSnapshot(tt.snap);
 
-    uint64_t term = u.MaybeTerm(test.index_);
-    EXPECT_EQ(term, test.wterm_) << "#test case: " << i;
+    auto [term, ok] = u.MaybeTerm(tt.index);
+    ASSERT_EQ(ok, tt.wok);
+    ASSERT_EQ(term, tt.wterm);
   }
 }
 
-TEST_F(UnstableTest, Restore)
-{
+TEST(Unstable, Restore) {
   craft::Unstable u;
-  u.entries_ = {make_entry(4, 1)};
-  u.offset_ = 5;
-  u.snapshot_.reset(make_snapshot(4, 1));
+  u.SetEntries({makeEntry(4, 1)});
+  u.SetOffset(5);
+  u.SetSnapshot(makeSnapshot(4, 1));
 
-  std::unique_ptr<raftpb::Snapshot> s(make_snapshot(6, 2));
-  u.Restore(*s);
+  auto s = makeSnapshot(6, 2);
+  u.Restore(s);
 
-  EXPECT_EQ(u.offset_, (s->metadata().index() + 1));
-  EXPECT_TRUE(u.entries_.empty());
-  ASSERT_TRUE(u.snapshot_ != nullptr);
-  EXPECT_EQ(u.snapshot_->metadata().index(), s->metadata().index());
-  EXPECT_EQ(u.snapshot_->metadata().term(), s->metadata().term());
+  ASSERT_EQ(u.Offset(), s->metadata().index() + 1);
+  ASSERT_TRUE(u.Entries().empty());
+  ASSERT_TRUE(u.Snapshot() != nullptr);
+  ASSERT_EQ(u.Snapshot()->metadata().index(), s->metadata().index());
+  ASSERT_EQ(u.Snapshot()->metadata().term(), s->metadata().term());
 }
 
-TEST_F(UnstableTest, StableTo)
-{
-  struct Test
-  {
-    std::vector<raftpb::Entry> entries_;
-    uint64_t offset_;
-    raftpb::Snapshot *snap_;
-    uint64_t index_;
-    uint64_t term_;
+TEST(Unstable, StableTo) {
+  struct Test {
+    craft::EntryPtrs entries;
+    uint64_t offset;
+    craft::SnapshotPtr snap;
+    uint64_t index;
+    uint64_t term;
 
-    uint64_t woffset_;
-    uint64_t wlen_;
+    uint64_t woffset;
+    uint64_t wlen;
   };
 
   std::vector<Test> tests = {
-      {{}, 0, nullptr, 5, 1, 0, 0},
+      {
+        {}, 0, nullptr, 5, 1, 0, 0
+      },
       // stable to the first entry
-      {{make_entry(5, 1)}, 5, nullptr, 5, 1, 6, 0},
+      {
+        {makeEntry(5, 1)}, 5, nullptr, 5, 1, 6, 0
+      },
       // stable to the first entry
-      {{make_entry(5, 1), make_entry(6, 1)}, 5, nullptr, 5, 1, 6, 1},
+      {
+        {makeEntry(5, 1), makeEntry(6, 1)}, 5, nullptr, 5, 1, 6, 1
+      },
       // stable to the first entry and term mismatch
-      {{make_entry(6, 2)}, 6, nullptr, 6, 1, 6, 1},
+      {
+        {makeEntry(6, 2)}, 6, nullptr, 6, 1, 6, 1
+      },
       // stable to old entry
-      {{make_entry(5, 1)}, 5, nullptr, 4, 1, 5, 1},
+      {
+        {makeEntry(5, 1)}, 5, nullptr, 4, 1, 5, 1
+      },
       // with snapshot
       // stable to the first entry
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 5, 1, 6, 0},
+      {
+        {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), 5, 1, 6, 0
+      },
       // stable to the first entry
-      {{make_entry(5, 1), make_entry(6, 1)}, 5, make_snapshot(4, 1), 5, 1, 6, 1},
+      {
+        {makeEntry(5, 1), makeEntry(6, 1)}, 5, makeSnapshot(4, 1), 5, 1, 6, 1
+       },
       // stable to the first entry and term mismatch
-      {{make_entry(6, 2)}, 6, make_snapshot(5, 1), 6, 1, 6, 1},
+      {
+        {makeEntry(6, 2)}, 6, makeSnapshot(5, 1), 6, 1, 6, 1
+      },
       // stable to snapshot
-      {{make_entry(5, 1)}, 5, make_snapshot(4, 1), 4, 1, 5, 1},
+      {
+        {makeEntry(5, 1)}, 5, makeSnapshot(4, 1), 4, 1, 5, 1
+      },
       // stable to old entry
-      {{make_entry(5, 2)}, 5, make_snapshot(4, 2), 4, 1, 5, 1}};
+      {
+        {makeEntry(5, 2)}, 5, makeSnapshot(4, 2), 4, 1, 5, 1
+      }
+    };
 
-  for (int i = 0; i < tests.size(); i++)
-  {
-    Test &test = tests[i];
-
+  for (auto& tt : tests) {
     craft::Unstable u;
-    u.entries_ = test.entries_;
-    u.offset_ = test.offset_;
-    u.snapshot_.reset(test.snap_);
+    u.SetEntries(tt.entries);
+    u.SetOffset(tt.offset);
+    u.SetSnapshot(tt.snap);
 
-    u.StableTo(test.index_, test.term_);
-    EXPECT_EQ(u.offset_, test.woffset_) << "#test case: " << i;
-    EXPECT_EQ(static_cast<uint64_t>(u.entries_.size()), test.wlen_) << "#test case: " << i;
+    u.StableTo(tt.index, tt.term);
+    ASSERT_EQ(u.Offset(), tt.woffset);
+    ASSERT_EQ(u.Entries().size(), tt.wlen);
   }
 }
 
-TEST_F(UnstableTest, TruncateAndAppend)
-{
-  struct Test
-  {
-    std::vector<raftpb::Entry> entries_;
-    uint64_t offset_;
-    raftpb::Snapshot *snap_;
-    std::vector<raftpb::Entry> toappend_;
+TEST(Unstable, TruncateAndAppend) {
+  struct Test {
+    craft::EntryPtrs entries;
+    uint64_t offset;
+    craft::SnapshotPtr snap;
+    craft::EntryPtrs toappend;
 
-    uint64_t woffset_;
-    std::vector<raftpb::Entry> wentries_;
+    uint64_t woffset;
+    craft::EntryPtrs wentries;
   };
 
   std::vector<Test> tests = {
-      // append to the end
-      {
-          {make_entry(5, 1)}, 5, nullptr, {make_entry(6, 1), make_entry(7, 1)}, 5, {make_entry(5, 1), make_entry(6, 1), make_entry(7, 1)}},
-      // replace the unstable entries
-      {
-          {make_entry(5, 1)}, 5, nullptr, {make_entry(5, 2), make_entry(6, 2)}, 5, {make_entry(5, 2), make_entry(6, 2)}},
-      {{make_entry(5, 1)}, 5, nullptr, {make_entry(4, 2), make_entry(5, 2), make_entry(6, 2)}, 4, {make_entry(4, 2), make_entry(5, 2), make_entry(6, 2)}},
-      // truncate the existing entries and append
-      {
-          {make_entry(5, 1), make_entry(6, 1), make_entry(7, 1)}, 5, nullptr, {make_entry(6, 2)}, 5, {make_entry(5, 1), make_entry(6, 2)}},
-      {{make_entry(5, 1), make_entry(6, 1), make_entry(7, 1)}, 5, nullptr, {make_entry(7, 2), make_entry(8, 2)}, 5, {make_entry(5, 1), make_entry(6, 1), make_entry(7, 2), make_entry(8, 2)}}};
-
-  for (int i = 0; i < tests.size(); i++)
-  {
-    Test &test = tests[i];
-
-    craft::Unstable u;
-    u.entries_ = test.entries_;
-    u.offset_ = test.offset_;
-    u.snapshot_.reset(test.snap_);
-
-    u.TruncateAndAppend(test.toappend_);
-
-    EXPECT_EQ(u.offset_, test.woffset_) << "#test case: " << i;
-    EXPECT_EQ(u.entries_.size(), test.wentries_.size()) << "#test case: " << i;
-    if (u.entries_.size() != test.wentries_.size())
+    // append to the end
     {
-      continue;
+      {makeEntry(5, 1)},
+      5, nullptr,
+      {makeEntry(6, 1), makeEntry(7, 1)},
+      5,
+      {makeEntry(5, 1), makeEntry(6, 1), makeEntry(7, 1)}},
+    // replace the unstable entries
+    {
+      {makeEntry(5, 1)},
+      5, nullptr,
+      {makeEntry(5, 2), makeEntry(6, 2)},
+      5,
+      {makeEntry(5, 2), makeEntry(6, 2)}},
+    {
+      {makeEntry(5, 1)},
+      5, nullptr,
+      {makeEntry(4, 2), makeEntry(5, 2), makeEntry(6, 2)},
+      4,
+      {makeEntry(4, 2), makeEntry(5, 2), makeEntry(6, 2)}},
+    // truncate the existing entries and append
+    {
+      {makeEntry(5, 1), makeEntry(6, 1), makeEntry(7, 1)},
+      5, nullptr,
+      {makeEntry(6, 2)},
+      5,
+      {makeEntry(5, 1), makeEntry(6, 2)}},
+    {
+      {makeEntry(5, 1), makeEntry(6, 1), makeEntry(7, 1)},
+      5, nullptr,
+      {makeEntry(7, 2), makeEntry(8, 2)},
+      5,
+      {makeEntry(5, 1), makeEntry(6, 1), makeEntry(7, 2), makeEntry(8, 2)}
     }
+  };
 
-    for (int i = 0; i < u.entries_.size(); i++)
-    {
-      EXPECT_EQ(u.entries_[i].index(), test.wentries_[i].index()) << "#test case: " << i;
-      EXPECT_EQ(u.entries_[i].term(), test.wentries_[i].term()) << "#test case: " << i;
+  for (auto& tt : tests) {
+    craft::Unstable u;
+    u.SetEntries(tt.entries);
+    u.SetOffset(tt.offset);
+    u.SetSnapshot(tt.snap);
+
+    u.TruncateAndAppend(tt.toappend);
+
+    ASSERT_EQ(u.Offset(), tt.woffset);
+    ASSERT_EQ(u.Entries().size(), tt.wentries.size());
+    for (size_t i = 0; i < u.Entries().size(); i++) {
+      ASSERT_EQ(u.Entries()[i]->index(), tt.wentries[i]->index());
+      ASSERT_EQ(u.Entries()[i]->term(), tt.wentries[i]->term());
     }
   }
 }
 
-int _tmain(int argc, char *argv[])
-{
+int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

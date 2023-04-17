@@ -61,6 +61,10 @@ class Unstable {
 
   uint64_t Offset() const { return offset_; }
 
+  void SetSnapshot(SnapshotPtr snapshot) { snapshot_ = snapshot; }
+  void SetEntries(const EntryPtrs& ents) { entries_ = ents; }
+  void SetOffset(uint64_t offset) { offset_ = offset; }
+
  private:
   // shrinkEntriesArray discards the underlying array used by the entries slice
   // if most of it isn't being used. This avoids holding references to a bunch

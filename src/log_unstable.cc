@@ -81,7 +81,7 @@ void Unstable::StableSnapTo(uint64_t i) {
 void Unstable::Restore(SnapshotPtr snapshot) {
   offset_ = snapshot->metadata().index() + 1;
   entries_.clear();
-  snapshot = snapshot;
+  snapshot_ = snapshot;
 }
 
 void Unstable::TruncateAndAppend(const EntryPtrs& ents) {
@@ -99,7 +99,6 @@ void Unstable::TruncateAndAppend(const EntryPtrs& ents) {
   } else {
     // truncate to after and copy to u.entries
     // then append
-    // MustCheckOutOfBounds(offset_, after);
     entries_.erase(entries_.begin() + (after - offset_), entries_.end());
     entries_.insert(entries_.end(), ents.begin(), ents.end());
   }
@@ -107,7 +106,7 @@ void Unstable::TruncateAndAppend(const EntryPtrs& ents) {
 
 EntryPtrs Unstable::Slice(uint64_t lo, uint64_t hi) const {
   MustCheckOutOfBounds(lo, hi);
-  std::vector<std::shared_ptr<raftpb::Entry>> ents;
+  EntryPtrs ents;
   ents.insert(ents.end(), entries_.begin() + (lo - offset_),
               entries_.begin() + (hi - offset_));
   return ents;
@@ -116,11 +115,6 @@ EntryPtrs Unstable::Slice(uint64_t lo, uint64_t hi) const {
 void Unstable::ShrikEntriesArray() { entries_.shrink_to_fit(); }
 
 void Unstable::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
-  // assert(lo <= hi);
-  // uint64_t upper = offset_ + static_cast<uint64_t>(entries_.size());
-  // assert(lo >= offset_);
-  // assert(hi <= upper);
-
   if (lo > hi) {
     LOG_FATAL("invalid unstable.slice %d > %d", lo, hi);
   }

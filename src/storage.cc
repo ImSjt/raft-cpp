@@ -30,6 +30,8 @@ MemoryStorage::MemoryStorage() {
   entry.set_index(0);
   entry.set_term(0);
   ents_.emplace_back(std::make_shared<raftpb::Entry>(std::move(entry)));
+
+  snapshot_ = std::make_shared<raftpb::Snapshot>();
 }
 
 std::tuple<raftpb::HardState, raftpb::ConfState, Status>
@@ -50,9 +52,7 @@ MemoryStorage::Entries(uint64_t lo, uint64_t hi, uint64_t max_size) {
   assert(!ents_.empty());
   uint64_t offset = ents_[0]->index();
   if (lo <= offset) {
-    return std::make_tuple(
-        EntryPtrs(),
-        Status::Error("%s [offset: %d, lo: %d]", kErrCompacted, offset, lo));
+    return std::make_tuple(EntryPtrs(), Status::Error(kErrCompacted));
   }
 
   if (hi > LastIndexUnSafe() + 1) {
@@ -63,9 +63,7 @@ MemoryStorage::Entries(uint64_t lo, uint64_t hi, uint64_t max_size) {
 
   // only contains dummy entries.
   if (ents_.size() == 1) {
-    return std::make_tuple(
-        EntryPtrs(),
-        Status::Error("%s [len(ents_): %d]", kErrUnavailable, ents_.size()));
+    return std::make_tuple(EntryPtrs(), Status::Error(kErrUnavailable));
   }
 
   // copy entries[lo, hi)
@@ -79,15 +77,17 @@ std::tuple<uint64_t, Status> MemoryStorage::Term(uint64_t i) {
   assert(!ents_.empty());
   uint64_t offset = ents_[0]->index();
   if (i < offset) {
-    return std::make_tuple(
-        0, Status::Error("%s [offset: %d, i: %d]", kErrCompacted, offset, i));
+    // return std::make_tuple(
+    //     0, Status::Error("%s [offset: %d, i: %d]", kErrCompacted, offset, i));
+    return std::make_tuple(0, Status::Error(kErrCompacted));
   }
   // relative index
   uint64_t rel_index = i - offset;
   if (rel_index >= static_cast<uint64_t>(ents_.size())) {
-    return std::make_tuple(
-        0, Status::Error("%s [rel_index: %d, len(ents_): %d]", kErrUnavailable,
-                         rel_index, ents_.size()));
+    // return std::make_tuple(
+    //     0, Status::Error("%s [rel_index: %d, len(ents_): %d]", kErrUnavailable,
+    //                      rel_index, ents_.size()));
+    return std::make_tuple(0, Status::Error(kErrUnavailable));
   }
   return std::make_tuple(ents_[rel_index]->term(), Status::OK());
 }
@@ -114,8 +114,7 @@ Status MemoryStorage::ApplySnapshot(SnapshotPtr snapshot) {
   uint64_t ms_index = snapshot_->metadata().index();
   uint64_t snap_index = snapshot->metadata().index();
   if (ms_index >= snap_index) {
-    return Status::Error("%s [ms_index: %d, snap_index: %d]", kErrSnapOutOfDate,
-                         ms_index, snap_index);
+    return Status::Error(kErrSnapOutOfDate);
   }
 
   snapshot_ = snapshot;
@@ -132,9 +131,7 @@ std::tuple<SnapshotPtr, Status> MemoryStorage::CreateSnapshot(
   std::lock_guard<std::shared_mutex> guard(mutex_);
 
   if (i <= snapshot_->metadata().index()) {
-    return std::make_tuple(
-        SnapshotPtr(), Status::Error("%s [i: %d, index: %d]", kErrSnapOutOfDate,
-                                     i, snapshot_->metadata().index()));
+    return std::make_tuple(SnapshotPtr(), Status::Error(kErrSnapOutOfDate));
   }
 
   assert(!ents_.empty());
@@ -161,8 +158,7 @@ Status MemoryStorage::Compact(uint64_t compact_index) {
   assert(!ents_.empty());
   uint64_t offset = ents_[0]->index();
   if (compact_index <= offset) {
-    return Status::Error("%s [compact_index: %d, offset: %d]", kErrCompacted,
-                         compact_index, offset);
+    return Status::Error(kErrCompacted);
   }
 
   if (compact_index > LastIndexUnSafe()) {

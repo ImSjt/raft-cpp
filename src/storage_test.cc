@@ -1,326 +1,344 @@
+// Copyright 2023 JT
+//
+// Copyright 2019 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "gtest/gtest.h"
+#include "storage.h"
 
-#define private public
-#define protected public
-#include "craft/storage.h"
-#undef private
-#undef protected
+static craft::EntryPtr makeEntry(uint64_t index, uint64_t term) {
+  auto ent = std::make_shared<raftpb::Entry>();
+  ent->set_index(index);
+  ent->set_term(term);
+  return ent;
+}
 
-static raftpb::Entry make_entry(uint64_t index, uint64_t term);
-
-class MemoryStorageTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        for (uint64_t i = 3; i <= 5; i++) {
-            ents_.push_back(make_entry(i, i));
-        }
-
-        storage_.ents_ = ents_; // [3, 4, 5]
+static bool IsEqual(const craft::EntryPtrs& a, const craft::EntryPtrs& b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.size(); i++) {
+    if (a[i]->index() != b[i]->index()) {
+      return false;
     }
+    if (a[i]->term() != b[i]->term()) {
+      return false;
+    }
+  }
+  return true;
+}
 
-    // void TearDown() override {}
+static bool IsEqual(std::shared_ptr<raftpb::Snapshot> a, std::shared_ptr<raftpb::Snapshot> b) {
+  if (a->data() != b->data()) {
+    return false;
+  }
+  if (a->metadata().index() != b->metadata().index()) {
+    return false;
+  }
+  if (a->metadata().term() != b->metadata().term()) {
+    return false;
+  }
 
-protected:
-    std::vector<raftpb::Entry> ents_;
-    craft::MemoryStorage storage_;
+  auto& avoters = a->metadata().conf_state().voters();
+  auto& bvoters = b->metadata().conf_state().voters();
+  if (avoters.size() != bvoters.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < avoters.size(); i++) {
+    if (avoters[i] != bvoters[i]) {
+      return false;
+    }
+  }
+  return true;
+}
 
-};
+// class MemoryStorageTest : public ::testing::Test {
+// protected:
+//     void SetUp() override {
+//         for (uint64_t i = 3; i <= 5; i++) {
+//             ents_.push_back(makeEntry(i, i));
+//         }
 
-static raftpb::Entry make_entry(uint64_t index, uint64_t term) {
-    raftpb::Entry ent;
+//         storage_.ents_ = ents_; // [3, 4, 5]
+//     }
+
+//     // void TearDown() override {}
+
+// protected:
+//     std::vector<raftpb::Entry> ents_;
+//     craft::MemoryStorage storage_;
+
+// };
+
+// static raftpb::Entry makeEntry(uint64_t index, uint64_t term) {
+//     raftpb::Entry ent;
+
+//     ent.set_index(index);
+//     ent.set_term(term);
+
+//     return ent;
+// }
+
+TEST(MemoryStorage, Term) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
+  struct Test {
+    uint64_t index;
+
+    uint64_t wterm;
+    craft::Status wstatus;
+  };
+
+  std::vector<Test> tests = {
+    {2, 0, craft::Status::Error(craft::kErrCompacted)},
+    {3, 3, craft::Status::OK()},
+    {4, 4, craft::Status::OK()},
+    {5, 5, craft::Status::OK()},
+    {6, 0, craft::Status::Error(craft::kErrUnavailable)}
+  };
+
+  for (auto& tt : tests) {
+    craft::MemoryStorage s;
+    s.SetEntries(ents);
+
+    auto [term, status] = s.Term(tt.index);
+    ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
+    if (!status.IsOK()) {
+      ASSERT_STREQ(status.Str(), tt.wstatus.Str());
+    }
+    ASSERT_EQ(term, tt.wterm);
+  }
+}
+
+TEST(MemoryStorage, Entries) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5), makeEntry(6, 6)};
+  struct Test {
+    uint64_t lo;
+    uint64_t hi;
+    uint64_t max_size;
+
+    craft::Status wstatus;
+    craft::EntryPtrs wentries;
+  };
+
+  std::vector<Test> tests = {
+    {2, 6, std::numeric_limits<uint64_t>::max(), craft::Status::Error(craft::kErrCompacted), {}},
+    {3, 4, std::numeric_limits<uint64_t>::max(), craft::Status::Error(craft::kErrCompacted), {}},
+    {4, 5, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {makeEntry(4, 4)}},
+    {4, 6, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5)}},
+    {4, 7, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5), makeEntry(6, 6)}},
+    // even if maxsize is zero, the first entry should be returned
+    {4, 7, 0, craft::Status::OK(), {}},
+    // limit to 2
+    {4, 7, ents[1]->ByteSizeLong() + ents[2]->ByteSizeLong(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5)}},
+    // limit to 2
+    {4, 7, ents[1]->ByteSizeLong() + ents[2]->ByteSizeLong() + ents[3]->ByteSizeLong() / 2, craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5)}},
+    {4, 7, ents[1]->ByteSizeLong() + ents[2]->ByteSizeLong() + ents[3]->ByteSizeLong() - 1, craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5)}},
+    // all
+    {4, 7, ents[1]->ByteSizeLong() + ents[2]->ByteSizeLong() + ents[3]->ByteSizeLong(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5), makeEntry(6, 6)}},
+  };
+
+  for (auto& tt : tests) {
+    craft::MemoryStorage s;
+    s.SetEntries(ents);
+    auto [entries, status] = s.Entries(tt.lo, tt.hi, tt.max_size);
+    ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
+    if (!status.IsOK()) {
+      ASSERT_STREQ(status.Str(), tt.wstatus.Str());
+    }
+    ASSERT_TRUE(IsEqual(entries, tt.wentries));
+  }
+}
+
+TEST(MemoryStorage, LastIndex) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
+  craft::MemoryStorage s;
+  s.SetEntries(ents);
+
+  auto [last, status] = s.LastIndex();
+  ASSERT_TRUE(status.IsOK());
+  ASSERT_EQ(last, 5);
+
+  s.Append({makeEntry(6, 5)});
+  std::tie(last, status) = s.LastIndex();
+  ASSERT_TRUE(status.IsOK());
+  ASSERT_EQ(last, 6);;
+}
+
+TEST(MemoryStorage, FirstIndex) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
+  craft::MemoryStorage s;
+  s.SetEntries(ents);
+
+  auto [first, status] = s.FirstIndex();
+  ASSERT_TRUE(status.IsOK());
+  ASSERT_EQ(first, 4);
+
+  s.Compact(4);
+  std::tie(first, status) = s.FirstIndex();
+  ASSERT_TRUE(status.IsOK());
+  EXPECT_EQ(first, 5);
+}
+
+TEST(MemoryStorage, Compact) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
+  struct Test {
+    uint64_t i;
+
+    craft::Status wstatus;
+    uint64_t windex;
+    uint64_t wterm;
+    uint64_t wlen;
+  };
+
+  std::vector<Test> tests = {
+    {2, craft::Status::Error(craft::kErrCompacted), 3, 3, 3},
+    {3, craft::Status::Error(craft::kErrCompacted), 3, 3, 3},
+    {4, craft::Status::OK(), 4, 4, 2},
+    {5, craft::Status::OK(), 5, 5, 1}
+  };
+
+  for (auto& tt : tests) {
+    craft::MemoryStorage s;
+    s.SetEntries(ents);
+    auto status = s.Compact(tt.i);
+    ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
+    if (!status.IsOK()) {
+      ASSERT_STREQ(status.Str(), tt.wstatus.Str());
+    }
     
-    ent.set_index(index);
-    ent.set_term(term);
-
-    return ent;
+    ASSERT_EQ(s.GetEntries()[0]->index(), tt.windex);
+    ASSERT_EQ(s.GetEntries()[0]->term(), tt.wterm);
+    ASSERT_EQ(s.GetEntries().size(), tt.wlen);
+  }
 }
 
-TEST_F(MemoryStorageTest, Term) {
-    struct Test {
-        uint64_t index_;
-        uint64_t wterm_;
-        craft::Status wstatus_;
-    };
+TEST(MemoryStorage, CreateSnapshot) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
+  raftpb::ConfState cs;
+  cs.add_voters(1);
+  cs.add_voters(2);
+  cs.add_voters(3);
+  std::string data("data");
+  auto make_snapshot = [&cs, &data](uint64_t index, uint64_t term) {
+    auto snapshot = std::make_shared<raftpb::Snapshot>();
+    snapshot->set_data(data);
+    snapshot->mutable_metadata()->set_index(index);
+    snapshot->mutable_metadata()->set_term(term);
+    *(snapshot->mutable_metadata()->mutable_conf_state()) = cs;
+    return snapshot;
+  };
 
-    std::vector<Test> tests = {
-        {2, 0, craft::Status::Error("%s [offset: %d, i: 2]", craft::kErrCompacted, storage_.ents_[0].index())},
-        {3, 3, craft::Status::OK()},
-        {4, 4, craft::Status::OK()},
-        {5, 5, craft::Status::OK()},
-        {6, 0, craft::Status::Error("%s [rel_index: %d, len(ents_): %d]", craft::kErrUnavailable, 6-(storage_.ents_[0].index()), storage_.ents_.size())}
-    };
+  struct Test {
+    uint64_t i;
+    craft::Status wstatus;
+    std::shared_ptr<raftpb::Snapshot> wsnap;
+  };
 
-    for (int i = 0; i < tests.size(); i++) {
-        Test& test = tests[i];
-        uint64_t term;
-        craft::Status status = storage_.Term(test.index_, term);
-        EXPECT_STREQ(status.Str(), test.wstatus_.Str()) << "#test case: " << i;
-        EXPECT_EQ(term, test.wterm_) << "#test case: " << i;
+  std::vector<Test> tests = {
+    {4, craft::Status::OK(), make_snapshot(4, 4)},
+    {5, craft::Status::OK(), make_snapshot(5, 5)},
+  };
+
+  for (auto& tt : tests) {
+    craft::MemoryStorage s;
+    s.SetEntries(ents);
+    auto [snap, status] = s.CreateSnapshot(tt.i, &cs, data);
+
+    ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
+    if (!status.IsOK()) {
+      ASSERT_STREQ(status.Str(), tt.wstatus.Str());
     }
+    ASSERT_TRUE(IsEqual(snap, tt.wsnap));
+  }
 }
 
-TEST_F(MemoryStorageTest, Entries) {
-    raftpb::Entry entry = make_entry(6, 6);
-    std::vector<raftpb::Entry> ents = {entry};
-    storage_.Append(ents); // [3, 4, 5, 6]
+TEST(MemoryStorage, Append) {
+  craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
+  struct Test {
+    craft::EntryPtrs entries;
+    craft::Status wstatus;
+    craft::EntryPtrs wentries;
+  };
 
-    struct Test
-    {
-        uint64_t lo_;
-        uint64_t hi_;
-        uint64_t max_size_;
-        craft::Status wstatus_;
-        std::vector<raftpb::Entry> wentries_;
+  std::vector<Test> tests = {
+    {{makeEntry(1, 1), makeEntry(2, 2)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)}},
+    {{makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)}},
+    {{makeEntry(3, 3), makeEntry(4, 6), makeEntry(5, 6)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 6), makeEntry(5, 6)}},
+    {{makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5), makeEntry(6, 5)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5),
+      makeEntry(6, 5)}},
+    // truncate incoming entries, truncate the existing entries and append
+    {{makeEntry(2, 3), makeEntry(3, 3), makeEntry(4, 5)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 5)}},
+    {{makeEntry(4, 5)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 5)}},
+    // direct append
+    {{makeEntry(6, 5)},
+      craft::Status::OK(),
+      {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5),
+      makeEntry(6, 5)}}
     };
 
-    std::vector<Test> tests = {
-        {2, 6, std::numeric_limits<uint64_t>::max(), craft::Status::Error("%s [offset: %d, lo: 2]", craft::kErrCompacted, storage_.ents_[0].index()), {}},
-        {3, 4, std::numeric_limits<uint64_t>::max(), craft::Status::Error("%s [offset: %d, lo: 3]", craft::kErrCompacted, storage_.ents_[0].index()), {}},
-        {4, 5, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {make_entry(4, 4)}},
-        {4, 6, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {make_entry(4, 4), make_entry(5, 5)}},
-        {4, 7, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {make_entry(4, 4), make_entry(5, 5), make_entry(6, 6)}},
-        {4, 7, 0, craft::Status::OK(), {}},
-        {4, 7, static_cast<uint64_t>(entry.ByteSizeLong())*2 + static_cast<uint64_t>(entry.ByteSizeLong())/2, craft::Status::OK(), std::vector<raftpb::Entry>{make_entry(4, 4), make_entry(5, 5)}},
-        {4, 7, static_cast<uint64_t>(entry.ByteSizeLong())*3 - 1, craft::Status::OK(), {make_entry(4, 4), make_entry(5, 5)}},
-        {4, 7, static_cast<uint64_t>(entry.ByteSizeLong())*3, craft::Status::OK(), {make_entry(4, 4), make_entry(5, 5), make_entry(6, 6)}}
-    };
-    
-    for (int i = 0; i < tests.size(); i++) {
-        Test& test = tests[i];
-        std::vector<raftpb::Entry> entries;
-        craft::Status status = storage_.Entries(test.lo_, test.hi_, test.max_size_, entries);
-        EXPECT_STREQ(status.Str(), test.wstatus_.Str()) << "#test case: " << i;
-        EXPECT_EQ(entries.size(), test.wentries_.size()) << "#test case: " << i;
-
-        if (entries.size() != test.wentries_.size()) {
-            continue;
-        }
-
-        for (int i = 0; i < entries.size(); i++) {
-            EXPECT_EQ(entries[i].index(), test.wentries_[i].index()) << "#test case: " << i;
-            EXPECT_EQ(entries[i].term(), test.wentries_[i].term()) << "#test case: " << i;
-        }
+  for (auto& tt : tests) {
+    craft::MemoryStorage s;
+    s.SetEntries(ents);
+    auto status = s.Append(tt.entries);
+    ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
+    if (!status.IsOK()) {
+      ASSERT_STREQ(status.Str(), tt.wstatus.Str());
     }
+    ASSERT_TRUE(IsEqual(s.GetEntries(), tt.wentries));
+  }
 }
 
-TEST_F(MemoryStorageTest, LastIndex) {
-    uint64_t last = storage_.LastIndex();
-    EXPECT_EQ(last, 5);
+TEST(MemoryStorage, ApplySnapshot) {
+  raftpb::ConfState cs;
+  cs.add_voters(1);
+  cs.add_voters(2);
+  cs.add_voters(3);
+  std::string data("data");
 
-    std::vector<raftpb::Entry> ents = {make_entry(6, 5)};
-    storage_.Append(ents);
-    last = storage_.LastIndex();
-    EXPECT_EQ(last, 6);
+  auto make_snapshot = [&cs, &data](uint64_t index, uint64_t term) {
+    auto snapshot = std::make_shared<raftpb::Snapshot>();
+    snapshot->set_data(data);
+    snapshot->mutable_metadata()->set_index(index);
+    snapshot->mutable_metadata()->set_term(term);
+    *(snapshot->mutable_metadata()->mutable_conf_state()) = cs;
+    return snapshot;
+  };
+
+  craft::MemoryStorage s;
+
+	//Apply Snapshot successful
+  auto status = s.ApplySnapshot(make_snapshot(4, 4));
+  ASSERT_TRUE(status.IsOK());
+
+	//Apply Snapshot fails due to ErrSnapOutOfDate
+  status = s.ApplySnapshot(make_snapshot(3, 3));
+  ASSERT_FALSE(status.IsOK());
+  ASSERT_STREQ(status.Str(), craft::kErrSnapOutOfDate);
 }
 
-TEST_F(MemoryStorageTest, FirstIndex) {
-    uint64_t first = storage_.FirstIndex();
-    EXPECT_EQ(first, 4);
-
-    storage_.Compact(4);
-    first = storage_.FirstIndex();
-    EXPECT_EQ(first, 5);
-}
-
-TEST_F(MemoryStorageTest, Compact) {
-    struct Test
-    {
-        uint64_t i_;
-        craft::Status wstatus_;
-        uint64_t windex_;
-        uint64_t wterm_;
-        uint64_t wlen_;
-    };
-
-    std::vector<Test> tests = {
-        {2, craft::Status::Error("%s [compact_index: 2, offset: %d]", craft::kErrCompacted, storage_.ents_[0].index()), 3, 3, 3},
-        {3, craft::Status::Error("%s [compact_index: 3, offset: %d]", craft::kErrCompacted, storage_.ents_[0].index()), 3, 3, 3},
-        {4, craft::Status::OK(), 4, 4, 2},
-        {5, craft::Status::OK(), 5, 5, 1}
-    };
-    
-    for (int i = 0; i < tests.size(); i++) {
-        Test& test = tests[i];
-        craft::MemoryStorage storage;
-        storage.ents_ = ents_; // [3, 4, 5]
-
-        craft::Status status = storage.Compact(test.i_);
-        EXPECT_STREQ(status.Str(), test.wstatus_.Str()) << "#test case: " << i;
-
-        uint64_t ent0_index = storage.ents_[0].index();
-        EXPECT_EQ(ent0_index, test.windex_) << "#test case: " << i;
-
-        uint64_t term;
-        status = storage.Term(ent0_index, term);
-        EXPECT_STREQ(status.Str(), "OK") << "#test case: " << i;
-        EXPECT_EQ(term, test.wterm_) << "#test case: " << i;
-        EXPECT_EQ(static_cast<uint64_t>((storage.ents_.size())), test.wlen_) << "#test case: " << i;
-    }
-}
-
-TEST_F(MemoryStorageTest, CreateSnapshot) {
-    raftpb::ConfState cs;
-    cs.add_voters(1);
-    cs.add_voters(2);
-    cs.add_voters(3);
-
-    std::string data("data");
-
-    auto make_snapshot = [&cs, &data](uint64_t index, uint64_t term){
-        raftpb::Snapshot snapshot;
-        snapshot.set_data(data);
-        snapshot.mutable_metadata()->set_index(index);
-        snapshot.mutable_metadata()->set_term(term);
-        *(snapshot.mutable_metadata()->mutable_conf_state()) = cs;
-
-        return snapshot;
-    };
-
-    struct Test
-    {
-        uint64_t i_;
-        craft::Status wstatus_;
-        raftpb::Snapshot wsnap_;
-    };
-
-    std::vector<Test> tests = {
-        {4, craft::Status::OK(), make_snapshot(4, 4)},
-        {5, craft::Status::OK(), make_snapshot(5, 5)},
-    };
-
-    for (int i = 0; i < tests.size(); i++) {
-        Test& test = tests[i];
-        craft::MemoryStorage storage;
-        storage.ents_ = ents_; // [3, 4, 5]
-
-        raftpb::Snapshot snapshot;
-        craft::Status status = storage.CreateSnapshot(test.i_, &cs, data, snapshot);
-        EXPECT_STREQ(status.Str(), test.wstatus_.Str()) << "#test case: " << i;
-        if (!status.ok()) {
-            continue;
-        }
-
-        EXPECT_EQ(snapshot.data(), test.wsnap_.data()) << "#test case: " << i;
-        EXPECT_EQ(snapshot.metadata().index(), test.wsnap_.metadata().index()) << "#test case: " << i;
-        EXPECT_EQ(snapshot.metadata().term(), test.wsnap_.metadata().term()) << "#test case: " << i;
-
-        auto voters = snapshot.metadata().conf_state().voters();
-        auto wvoters = test.wsnap_.metadata().conf_state().voters();
-        EXPECT_EQ(voters.size(), wvoters.size()) << "#test case: " << i;
-        if (voters.size() != wvoters.size()) {
-            continue;
-        }
-
-        for (int i = 0; i < voters.size(); i++) {
-            EXPECT_EQ(voters[i], wvoters[i]) << "#test case: " << i;
-        }
-    }
-}
-
-TEST_F(MemoryStorageTest, Append) {
-    struct Test
-    {
-        std::vector<raftpb::Entry> entries_;
-        craft::Status wstatus_;
-        std::vector<raftpb::Entry> wentries_;
-    };
-    
-    std::vector<Test> tests = {
-        {
-            {make_entry(1, 1), make_entry(2, 2)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 4), make_entry(5, 5)}
-        },
-        {
-            {make_entry(3, 3), make_entry(4, 4), make_entry(5, 5)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 4), make_entry(5, 5)}
-        },
-        {
-            {make_entry(3, 3), make_entry(4, 6), make_entry(5, 6)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 6), make_entry(5, 6)}
-        },
-        {
-            {make_entry(3, 3), make_entry(4, 4), make_entry(5, 5), make_entry(6, 5)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 4), make_entry(5, 5), make_entry(6, 5)}
-        },
-        // truncate incoming entries, truncate the existing entries and append
-        {
-            {make_entry(2, 3), make_entry(3, 3), make_entry(4, 5)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 5)}
-        },
-        {
-            {make_entry(4, 5)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 5)}
-        },
-        // direct append
-        {
-            {make_entry(6, 5)},
-            craft::Status::OK(),
-            {make_entry(3, 3), make_entry(4, 4), make_entry(5, 5), make_entry(6, 5)}
-        }
-    };
-
-    for (int i = 0; i < tests.size(); i++) {
-        Test& test = tests[i];
-        craft::MemoryStorage storage;
-        storage.ents_ = ents_; // [3, 4, 5]
-
-        craft::Status status = storage.Append(test.entries_);
-        EXPECT_STREQ(status.Str(), test.wstatus_.Str()) << "#test case: " << i;
-        EXPECT_EQ(storage.ents_.size(), test.wentries_.size()) << "#test case: " << i;
-        if (storage.ents_.size() != test.wentries_.size()) {
-            continue;
-        }
-
-        for (int i = 0; i < storage.ents_.size(); i++) {
-            EXPECT_EQ(storage.ents_[i].index(), test.wentries_[i].index()) << "#test case: " << i;
-            EXPECT_EQ(storage.ents_[i].term(), test.wentries_[i].term()) << "#test case: " << i;
-        }
-    }
-}
-
-TEST_F(MemoryStorageTest, ApplySnapshot) {
-    raftpb::ConfState cs;
-    cs.add_voters(1);
-    cs.add_voters(2);
-    cs.add_voters(3);
-
-    std::string data("data");
-
-    auto make_snapshot = [&cs, &data](uint64_t index, uint64_t term){
-        raftpb::Snapshot snapshot;
-        snapshot.set_data(data);
-        snapshot.mutable_metadata()->set_index(index);
-        snapshot.mutable_metadata()->set_term(term);
-        *(snapshot.mutable_metadata()->mutable_conf_state()) = cs;
-
-        return snapshot;
-    };
-
-    struct Test
-    {
-        raftpb::Snapshot snapshot_;
-        craft::Status wstatus_;
-    };
-
-    std::vector<Test> tests = {
-        {make_snapshot(4, 4), craft::Status::OK()},
-        {make_snapshot(3, 3), craft::Status::Error("requested index is older than the existing snapshot [ms_index: 4, snap_index: 3]")}
-    };
-    
-    for (int i = 0; i < tests.size(); i++) {
-        Test& test = tests[i];
-        craft::Status status = storage_.ApplySnapshot(test.snapshot_);
-        EXPECT_STREQ(status.Str(), test.wstatus_.Str()) << "#test case: " << i;
-    }
-}
-
-int _tmain(int argc, char* argv[]) {
+int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

@@ -139,6 +139,9 @@ class MemoryStorage : public Storage {
   // entries[0].Index > ms.entries[0].Index
   Status Append(EntryPtrs entries);
 
+  void SetEntries(const EntryPtrs& ents) { ents_ = ents; }
+  const EntryPtrs& GetEntries() const { return ents_; }
+
  private:
   uint64_t LastIndexUnSafe() const;
   uint64_t FirstIndexUnSafe() const;
