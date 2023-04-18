@@ -242,11 +242,14 @@ uint64_t RaftLog::Append(const EntryPtrs& ents) {
   if (ents.empty()) {
     return LastIndex();
   }
+
   uint64_t after = ents[0]->index() - 1;
   if (after < committed_) {
     LOG_FATAL("after(%d) is out of range [committed(%d)]", after, committed_);
   }
+
   unstable_.TruncateAndAppend(ents);
+
   return LastIndex();
 }
 
@@ -336,7 +339,7 @@ Status RaftLog::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
   }
   uint64_t fi = FirstIndex();
   if (lo < fi) {
-    return Status::Error("%s [lo: %d, fi: %d]", kErrCompacted, lo, fi);
+    return Status::Error(kErrCompacted);
   }
   uint64_t len = LastIndex() + 1 - fi;
   if (hi > fi + len) {

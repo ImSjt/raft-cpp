@@ -32,7 +32,7 @@ class RaftLog {
   // New returns log using the given storage and default options. It
   // recovers the log to the state that it just commits and applies the
   // latest snapshot.
-  static std::unique_ptr<RaftLog> New(std::shared_ptr<Storage>& storage) {
+  static std::unique_ptr<RaftLog> New(std::shared_ptr<Storage> storage) {
     return NewWithSize(storage, kNoLimit);
   }
 
@@ -154,6 +154,8 @@ class RaftLog {
   Status MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const;
 
   uint64_t ZeroTermOnErrCompacted(std::tuple<uint64_t, Status> t) const;
+
+  const Unstable& GetUnstable() const { return unstable_; }
 
  private:
   // storage_ contains all stable entries since the last snapshot.

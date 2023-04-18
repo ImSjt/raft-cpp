@@ -67,7 +67,8 @@ MemoryStorage::Entries(uint64_t lo, uint64_t hi, uint64_t max_size) {
   }
 
   // copy entries[lo, hi)
-  auto ents = EntryPtrs(&ents_[lo - offset], &ents_[hi - offset]);
+  EntryPtrs ents;
+  ents.assign(ents_.begin() + lo - offset, ents_.begin() + hi - offset);
   return std::make_tuple(Util::LimitSize(std::move(ents), max_size), Status::OK());
 }
 
@@ -122,7 +123,7 @@ Status MemoryStorage::ApplySnapshot(SnapshotPtr snapshot) {
   entry->set_term(snapshot->metadata().term());
   entry->set_index(snapshot->metadata().index());
   ents_.clear();
-  ents_.emplace_back(std::make_shared<raftpb::Entry>());
+  ents_.emplace_back(entry);
   return Status::OK();
 }
 

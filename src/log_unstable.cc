@@ -100,6 +100,7 @@ void Unstable::TruncateAndAppend(const EntryPtrs& ents) {
     // truncate to after and copy to u.entries
     // then append
     entries_.erase(entries_.begin() + (after - offset_), entries_.end());
+
     entries_.insert(entries_.end(), ents.begin(), ents.end());
   }
 }
