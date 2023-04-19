@@ -634,6 +634,104 @@ TEST(RaftLog, Term) {
   }
 }
 
+TEST(RaftLog, TermWithUnstableSnapshot) {
+  uint64_t storagesnapi = 100;
+  uint64_t unstablesnapi = storagesnapi + 5;
+
+  auto snap = std::make_shared<raftpb::Snapshot>();
+  snap->mutable_metadata()->set_index(storagesnapi);
+  snap->mutable_metadata()->set_term(1);
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->ApplySnapshot(snap);
+
+  auto snap2 = std::make_shared<raftpb::Snapshot>();
+  snap2->mutable_metadata()->set_index(unstablesnapi);
+  snap2->mutable_metadata()->set_term(1);
+  auto l = craft::RaftLog::New(storage);
+  l->Restore(snap2);
+
+  struct Test {
+    uint64_t index;
+    uint64_t w;
+  };
+  std::vector<Test> tests = {
+    // cannot get term from storage
+    {storagesnapi, 0},
+    // cannot get term from the gap between storage ents and unstable snapshot
+    {storagesnapi + 1, 0},
+    {unstablesnapi - 1, 0},
+    // get term from unstable snapshot index
+    {unstablesnapi, 1},
+  };
+  for (auto& tt : tests) {
+    auto [term, s] = l->Term(tt.index);
+    ASSERT_TRUE(s.IsOK());
+    ASSERT_EQ(term, tt.w);
+  }
+}
+
+TEST(RaftLog, Slice) {
+  uint64_t i;
+  uint64_t offset = 100;
+  uint64_t num = 100;
+  uint64_t last = offset + num;
+  uint64_t half = offset + num / 2;
+  auto halfe = std::make_shared<raftpb::Entry>();
+  halfe->set_index(half);
+  halfe->set_term(half);
+
+  auto snap = std::make_shared<raftpb::Snapshot>();
+  snap->mutable_metadata()->set_index(offset);
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->ApplySnapshot(snap);
+  for (i = 1; i < num / 2; i++) {
+    storage->Append({makeEntry(offset + i, offset + i)});
+  }
+
+  auto l = craft::RaftLog::New(storage);
+  for (i = num / 2; i < num; i++) {
+    l->Append({makeEntry(offset + i, offset + i)});
+  }
+
+  struct Test {
+    uint64_t from;
+    uint64_t to;
+    uint64_t limit;
+
+    craft::EntryPtrs w;
+    bool panic;
+  };
+  std::vector<Test> tests = {
+		// test no limit
+		{offset - 1, offset + 1, craft::RaftLog::kNoLimit, {}, false},
+		{offset, offset + 1, craft::RaftLog::kNoLimit, {}, false},
+		{half - 1, half + 1, craft::RaftLog::kNoLimit, {makeEntry(half - 1, half - 1), makeEntry(half, half)}, false},
+		{half, half + 1, craft::RaftLog::kNoLimit, {makeEntry(half, half)}, false},
+		{last - 1, last, craft::RaftLog::kNoLimit, {makeEntry(last - 1, last - 1)}, false},
+		// {last, last + 1, craft::RaftLog::kNoLimit, {}, true},
+
+		// test limit
+		{half - 1, half + 1, 0, {makeEntry(half - 1, half - 1)}, false},
+		{half - 1, half + 1, uint64_t(halfe->ByteSizeLong() + 1), {makeEntry(half - 1, half - 1)}, false},
+		{half - 2, half + 1, uint64_t(halfe->ByteSizeLong() + 1), {makeEntry(half - 2, half - 2)}, false},
+		{half - 1, half + 1, uint64_t(halfe->ByteSizeLong() * 2), {makeEntry(half - 1, half - 1), makeEntry(half, half)}, false},
+		{half - 1, half + 2, uint64_t(halfe->ByteSizeLong() * 3), {makeEntry(half - 1, half - 1), makeEntry(half, half), makeEntry(half + 1, half + 1)}, false},
+		{half, half + 2, uint64_t(halfe->ByteSizeLong()), {makeEntry(half, half)}, false},
+		{half, half + 2, uint64_t(halfe->ByteSizeLong() * 2), {makeEntry(half, half), makeEntry(half + 1, half + 1)}, false},
+  };
+
+  for (auto& tt : tests) {
+    auto [g, s] = l->Slice(tt.from, tt.to, tt.limit);
+    if (tt.from <= offset) {
+      ASSERT_STREQ(s.Str(), craft::kErrCompacted);
+    }
+    if (tt.from > offset) {
+      ASSERT_TRUE(s.IsOK());
+    }
+    ASSERT_TRUE(IsEqual(g, tt.w));
+  }
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

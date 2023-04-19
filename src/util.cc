@@ -23,6 +23,9 @@ EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
   uint64_t size = 0;
   for (auto it = ents.begin(); it != ents.end(); ++it) {
     size += static_cast<uint64_t>((*it)->ByteSizeLong());
+    if (it == ents.begin()) {
+      continue;
+    }
     if (size > max_size) {
       ents.erase(it, ents.end());
       break;
