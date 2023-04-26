@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CRAFT_PUBLIC_INCLUDE_DIR "include/craft")
 
+add_compile_options(-Wall -g)
+
 add_subdirectory(third_party/googletest)
 enable_testing()
 
@@ -137,3 +139,4 @@ craft_test("src/confchange/conf_change_test.cc")
 craft_test("src/log_unstable_test.cc")
 craft_test("src/storage_test.cc")
 craft_test("src/log_test.cc")
+craft_test("src/raft_test.cc")

@@ -23,16 +23,10 @@
 
 namespace craft {
 
-// Progress represents a follower’s progress in the view of the leader. Leader
-// maintains progresses of all followers, and sends entries to the follower
-// based on its progress.
-//
-// NB(tbg): Progress is basically a state machine whose transitions are mostly
-// strewn around `*raft.raft`. Additionally, some fields are only used when in a
-// certain State. All of this isn't ideal.
 class Progress {
  public:
-  Progress() = default;
+  Progress();
+
   Progress(uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active);
 
   // ResetState moves the Progress into the specified State, resetting

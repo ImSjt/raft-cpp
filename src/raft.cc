@@ -154,10 +154,11 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
     raft_log->AppliedTo(c.applied);
   }
 
+  auto last_index = raft_log->LastIndex();
   auto r = std::make_unique<Raft>(c, std::move(raft_log));
 
   auto [cfg, prs, s3] =
-      ::craft::Restore(Changer(r->GetTracker(), raft_log->LastIndex()), cs);
+      ::craft::Restore(Changer(r->GetTracker(), last_index), cs);
   if (!s3.IsOK()) {
     LOG_FATAL("restore error, err:%s", s3.Str());
   }
@@ -176,6 +177,7 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
 
 Raft::Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log)
     : id_(c.id),
+      term_(0),
       lead_(kNone),
       is_learner_(false),
       raft_log_(std::move(raft_log)),
@@ -548,7 +550,7 @@ void Raft::BecomLeader() {
   step_ = std::bind(&Raft::StepLeader, this, std::placeholders::_1);
   Reset(term_);
   tick_ = std::bind(&Raft::TickHeartbeat, this);
-  ;
+
   lead_ = id_;
   state_ = RaftStateType::kLeader;
   // Followers enter replicate mode when they've been successfully probed
@@ -852,7 +854,7 @@ Status Raft::Step(MsgPtr m) {
       Send(msg);
     }
   } else {
-    auto status = Step(m);
+    auto status = step_(m);
     if (!status.IsOK()) {
       return std::move(status);
     }
@@ -1165,6 +1167,7 @@ Status Raft::StepLeader(MsgPtr m) {
           }
         }
       }
+      break;
     }
     case raftpb::MessageType::MsgHeartbeatResp: {
       pr->SetRecentActive(true);
@@ -1195,6 +1198,7 @@ Status Raft::StepLeader(MsgPtr m) {
           Send(resp);
         }
       }
+      break;
     }
     case raftpb::MessageType::MsgSnapStatus: {
       if (pr->State() != StateType::kSnapshot) {
@@ -1224,6 +1228,7 @@ Status Raft::StepLeader(MsgPtr m) {
       // sending out the next MsgApp. If snapshot failure, wait for a heartbeat
       // interval before next try
       pr->SetProbeSent(true);
+      break;
     }
     case raftpb::MessageType::MsgUnreachable: {
       // During optimistic replication, if the remote becomes unreachable,
@@ -1234,6 +1239,7 @@ Status Raft::StepLeader(MsgPtr m) {
       LOG_DEBUG(
           "%x failed to send message to %x because it is unreachable [%s]", id_,
           m->from(), pr->String().c_str());
+      break;
     }
     case raftpb::MessageType::MsgTransferLeader: {
       if (pr->IsLearner()) {
@@ -1273,6 +1279,7 @@ Status Raft::StepLeader(MsgPtr m) {
       } else {
         SendAppend(lead_transferee);
       }
+      break;
     }
   }
   return Status::OK();

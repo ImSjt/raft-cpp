@@ -369,6 +369,7 @@ class Raft {
   const RaftLog* GetRaftLog() const { return raft_log_.get(); }
 
   uint64_t ID() const { return id_; }
+  void SetID(uint64_t id) { id_ = id; }
 
   std::deque<MsgPtr> Msgs() const { return msgs_; }
 
@@ -376,6 +377,13 @@ class Raft {
   void ClearReadStates() { read_states_.clear(); }
 
   void ClearMsgs() { msgs_.clear(); }
+
+  // for test
+  MsgPtrs ReadAndClearMsgs() {
+    auto ms = Msgs();
+    ClearMsgs();
+    return ms;
+  }
 
  private:
   uint64_t id_;

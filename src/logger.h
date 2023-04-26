@@ -73,4 +73,6 @@ class Logger : public Singleton<Logger> {
 
 }; // namespace craft
 
+// #define LOG_TRACE std::cout << "[ERROR] " << __FILE__ << ":" << __LINE__ << 
+
 #endif // __CRAFT_COMMON_LOGGER_H__
