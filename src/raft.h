@@ -276,7 +276,7 @@ class Raft {
 
   void BecomePreCandidate();
 
-  void BecomLeader();
+  void BecomeLeader();
 
   void Hup(CampaignType t);
 
@@ -363,6 +363,7 @@ class Raft {
   void SendMsgReadIndexResponse(MsgPtr m);
 
   uint64_t Term() const { return term_; }
+  void SetTerm(uint64_t term) { term_ = term; }
 
   const ProgressTracker& GetTracker() const { return trk_; }
   ProgressTracker& GetTracker() { return trk_; }
@@ -384,6 +385,20 @@ class Raft {
     ClearMsgs();
     return ms;
   }
+
+  void SetUncommittedSize(uint64_t uncommitted_size) { uncommitted_size_ = uncommitted_size; }
+  uint64_t UncommittedSize() const { return uncommitted_size_; }
+
+  RaftStateType State() const { return state_; }
+
+  int64_t ElectionTimeout() const { return election_timeout_; }
+  void SetRandomizedElectionTimeout(int64_t v) {
+    randomized_election_timeout_ = v;
+  }
+
+  bool IsLearner() const { return is_learner_; }
+
+  uint64_t Vote() const { return vote_; }
 
  private:
   uint64_t id_;

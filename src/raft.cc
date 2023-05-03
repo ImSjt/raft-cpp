@@ -172,12 +172,28 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
 
   r->BecomeFollower(r->Term(), kNone);
 
+  std::string nodes_str;
+  auto voter_nodes = r->GetTracker().VoterNodes();
+  for (size_t i = 0; i < voter_nodes.size(); i++) {
+    if (i != 0) {
+      nodes_str += ",";
+    }
+    nodes_str += std::to_string(voter_nodes[i]);
+  }
+  LOG_INFO(
+      "new raft %llu [peers: [%s], term: %llu, commit: %llu, applied: %llu, "
+      "lastindex: %llu, lastterm: %llu]",
+      r->ID(), nodes_str.c_str(), r->Term(), r->GetRaftLog()->Committed(),
+      r->GetRaftLog()->Applied(), r->GetRaftLog()->LastIndex(),
+      r->GetRaftLog()->LastTerm());
+
   return std::move(r);
 }
 
 Raft::Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log)
     : id_(c.id),
       term_(0),
+      vote_(kNone),
       lead_(kNone),
       is_learner_(false),
       raft_log_(std::move(raft_log)),
@@ -510,7 +526,7 @@ void Raft::BecomeFollower(uint64_t term, uint64_t lead) {
   tick_ = std::bind(&Raft::TickElection, this);
   lead_ = lead;
   state_ = RaftStateType::kFollower;
-  LOG_INFO("%d became follower at term %d", id_, term_);
+  LOG_INFO("%d became follower at term %d, vote %llu", id_, term_, vote_);
 }
 
 void Raft::BecomeCandidate() {
@@ -542,7 +558,7 @@ void Raft::BecomePreCandidate() {
   LOG_INFO("%llu became pre-candidate at term %llu", id_, term_);
 }
 
-void Raft::BecomLeader() {
+void Raft::BecomeLeader() {
   // TODO: remove the panic when the raft implementation is stable
   if (state_ == RaftStateType::kFollower) {
     LOG_FATAL("invalid transition [follower -> leader]");
@@ -634,7 +650,7 @@ void Raft::Campaign(CampaignType t) {
     if (t == CampaignType::kPreElection) {
       Campaign(CampaignType::kElection);
     } else {
-      BecomLeader();
+      BecomeLeader();
     }
     return;
   }
@@ -644,9 +660,9 @@ void Raft::Campaign(CampaignType t) {
       continue;
     }
     LOG_INFO(
-        "%llu [logterm: %llu, index: %llu] sent %s request to %llu at term "
+        "%llu [logterm: %llu, term: %llu, index: %llu] sent %s request to %llu at term "
         "%llu",
-        id_, raft_log_->LastTerm(), raft_log_->LastIndex(),
+        id_, raft_log_->LastTerm(), term, raft_log_->LastIndex(),
         raftpb::MessageType_Name(vote_msg).c_str(), id, term_);
     auto m = std::make_shared<raftpb::Message>();
     m->set_term(term);
@@ -699,28 +715,28 @@ Status Raft::Step(MsgPtr m) {
             m->index(), term_, election_timeout_ - election_elapsed_);
         return Status::OK();
       }
-      if (m->type() == raftpb::MessageType::MsgPreVote) {
-        // Never change our term in response to a PreVote
-      } else if (m->type() == raftpb::MessageType::MsgPreVoteResp &&
-                 !m->reject()) {
-        // We send pre-vote requests with a term in our future. If the
-        // pre-vote is granted, we will increment our term when we get a
-        // quorum. If it is not, the term comes from the node that
-        // rejected our vote so we should become a follower at the new
-        // term.
+    }
+    if (m->type() == raftpb::MessageType::MsgPreVote) {
+      // Never change our term in response to a PreVote
+    } else if (m->type() == raftpb::MessageType::MsgPreVoteResp &&
+                !m->reject()) {
+      // We send pre-vote requests with a term in our future. If the
+      // pre-vote is granted, we will increment our term when we get a
+      // quorum. If it is not, the term comes from the node that
+      // rejected our vote so we should become a follower at the new
+      // term.
+    } else {
+      LOG_INFO(
+          "%llu [term: %llu] received a %s message with higher term from "
+          "%llu [term: %llu]",
+          id_, term_, raftpb::MessageType_Name(m->type()).c_str(), m->from(),
+          m->term());
+      if (m->type() == raftpb::MessageType::MsgApp ||
+          m->type() == raftpb::MessageType::MsgHeartbeat ||
+          m->type() == raftpb::MessageType::MsgSnap) {
+        BecomeFollower(m->term(), m->from());
       } else {
-        LOG_INFO(
-            "%llu [term: %llu] received a %s message with higher term from "
-            "%llu [term: %llu]",
-            id_, term_, raftpb::MessageType_Name(m->type()).c_str(), m->from(),
-            m->term());
-        if (m->type() == raftpb::MessageType::MsgApp ||
-            m->type() == raftpb::MessageType::MsgHeartbeat ||
-            m->type() == raftpb::MessageType::MsgSnap) {
-          BecomeFollower(m->term(), m->from());
-        } else {
-          BecomeFollower(m->term(), kNone);
-        }
+        BecomeFollower(m->term(), kNone);
       }
     }
   } else if (m->term() < term_) {
@@ -816,10 +832,10 @@ Status Raft::Step(MsgPtr m) {
       // https://github.com/etcd-io/etcd/issues/7625#issuecomment-488798263.
       LOG_INFO(
           "%llu [logterm: %llu, index: %llu, vote: %llu] cast %s for %llu "
-          "[logterm: %llu, index: %llu] at term %llu",
+          "[logterm: %llu, term: %llu index: %llu] at term %llu",
           id_, raft_log_->LastTerm(), raft_log_->LastIndex(), vote_,
-          raftpb::MessageType_Name(m->type()).c_str(), m->from(), m->logterm(),
-          m->index(), m->term());
+          raftpb::MessageType_Name(m->type()).c_str(), m->from(), m->logterm(), m->term(),
+          m->index(), term_);
       // When responding to Msg{Pre,}Vote messages we include the term
       // from the message, not the local term. To see why, consider the
       // case where a single node was previously partitioned away and
@@ -831,7 +847,7 @@ Status Raft::Step(MsgPtr m) {
       // same in the case of regular votes, but different for pre-votes.
       auto msg = std::make_shared<raftpb::Message>();
       msg->set_to(m->from());
-      msg->set_term(term_);
+      msg->set_term(m->term());
       msg->set_type(Util::VoteRespMsgType(m->type()));
       Send(msg);
       if (m->type() == raftpb::MessageType::MsgVote) {
@@ -842,10 +858,10 @@ Status Raft::Step(MsgPtr m) {
     } else {
       LOG_INFO(
           "%llu [logterm: %llu, index: %llu, vote: %llu] rejected %s from %llu "
-          "[logterm: %llu, index: %llu] at term %llu",
+          "[logterm: %llu, term: %llu, index: %llu] at term %llu",
           id_, raft_log_->LastTerm(), raft_log_->LastIndex(), vote_,
-          raftpb::MessageType_Name(m->type()).c_str(), m->logterm(), m->index(),
-          m->term());
+          raftpb::MessageType_Name(m->type()).c_str(), m->from(), m->logterm(), m->term(),
+          m->index(), term_);
       auto msg = std::make_shared<raftpb::Message>();
       msg->set_to(m->from());
       msg->set_term(term_);
@@ -1313,12 +1329,12 @@ Status Raft::StepCandidate(MsgPtr m) {
     case raftpb::MessageType::MsgVoteResp: {
       auto [gr, rj, res] = Poll(m->from(), m->type(), !m->reject());
       LOG_INFO("%llu has received %lld %s votes and %lld vote rejections", id_,
-               gr, raftpb::MessageType_Name(m->type()), rj);
+               gr, raftpb::MessageType_Name(m->type()).c_str(), rj);
       if (res == VoteState::kVoteWon) {
         if (state_ == RaftStateType::kPreCandidate) {
           Campaign(CampaignType::kElection);
         } else {
-          BecomLeader();
+          BecomeLeader();
           BcastAppend();
         }
       } else if (res == VoteState::kVoteLost) {
@@ -1609,7 +1625,7 @@ raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2&& cc) {
     }
 
     std::vector<raftpb::ConfChangeSingle> ccs;
-    for (size_t i = 0; cc.changes_size(); i++) {
+    for (size_t i = 0; i < cc.changes_size(); i++) {
       ccs.emplace_back(cc.changes(i));
     }
 
@@ -1634,6 +1650,10 @@ raftpb::ConfState Raft::SwitchToConfig(const ProgressTracker::Config& cfg,
 
   auto cs = trk_.ConfState();
   auto pr = trk_.GetProgress(id_);
+
+	// Update whether the node itself is a learner, resetting to false when the
+	// node is removed.
+  is_learner_ = pr && pr->IsLearner();
 
   // Update whether the node itself is a learner, resetting to false when the
   // node is removed.
@@ -1730,7 +1750,7 @@ MsgPtr Raft::ResponseToReadIndexReq(MsgPtr req, uint64_t read_index) {
 bool Raft::IncreaseUncommittedSize(const EntryPtrs& ents) {
   uint64_t s = 0;
   for (auto& e : ents) {
-    s + static_cast<uint64_t>(Util::PayloadSize(e));
+    s += static_cast<uint64_t>(Util::PayloadSize(e));
   }
 
   if (uncommitted_size_ > 0 && s > 0 &&
@@ -1777,7 +1797,7 @@ int64_t Raft::NumOfPendingConf(const EntryPtrs& ents) {
 }
 
 void Raft::ReleasePendingReadIndexMessages() {
-  if (CommittedEntryinCurrentTerm()) {
+  if (!CommittedEntryinCurrentTerm()) {
     LOG_ERROR(
         "pending MsgReadIndex should be released only after first commit in "
         "current term");
