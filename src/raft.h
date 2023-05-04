@@ -368,6 +368,7 @@ class Raft {
   const ProgressTracker& GetTracker() const { return trk_; }
   ProgressTracker& GetTracker() { return trk_; }
   const RaftLog* GetRaftLog() const { return raft_log_.get(); }
+  RaftLog* GetRaftLog() { return raft_log_.get(); }
 
   uint64_t ID() const { return id_; }
   void SetID(uint64_t id) { id_ = id; }

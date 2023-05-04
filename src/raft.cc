@@ -700,8 +700,7 @@ Status Raft::Step(MsgPtr m) {
     if (m->type() == raftpb::MessageType::MsgVote ||
         m->type() == raftpb::MessageType::MsgPreVote) {
       bool force = m->context() == CampaignTypeName(CampaignType::kTransfer);
-      bool is_lease = check_quorum_ && lead_ != kNone &&
-                      election_elapsed_ < election_timeout_;
+      bool is_lease = check_quorum_ && lead_ != kNone && election_elapsed_ < election_timeout_;
       if (!force && is_lease) {
         // If a server receives a RequestVote request within the minimum
         // election timeout of hearing from a current leader, it does not update
@@ -718,8 +717,7 @@ Status Raft::Step(MsgPtr m) {
     }
     if (m->type() == raftpb::MessageType::MsgPreVote) {
       // Never change our term in response to a PreVote
-    } else if (m->type() == raftpb::MessageType::MsgPreVoteResp &&
-                !m->reject()) {
+    } else if (m->type() == raftpb::MessageType::MsgPreVoteResp && !m->reject()) {
       // We send pre-vote requests with a term in our future. If the
       // pre-vote is granted, we will increment our term when we get a
       // quorum. If it is not, the term comes from the node that

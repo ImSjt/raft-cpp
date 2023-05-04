@@ -156,6 +156,7 @@ class RaftLog {
   uint64_t ZeroTermOnErrCompacted(std::tuple<uint64_t, Status> t) const;
 
   const Unstable& GetUnstable() const { return unstable_; }
+  Unstable& GetUnstable() { return unstable_; }
 
  private:
   // storage_ contains all stable entries since the last snapshot.

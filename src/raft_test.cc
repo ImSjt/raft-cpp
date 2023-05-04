@@ -115,6 +115,7 @@ class NetWork {
   craft::MsgPtrs Filter(craft::MsgPtrs msgs);
 
   std::map<uint64_t, std::shared_ptr<StateMachince>>& Peers() { return peers_; }
+  std::map<uint64_t, std::shared_ptr<craft::MemoryStorage>> Storages() { return storages_; }
 
  private:
   std::map<uint64_t, std::shared_ptr<StateMachince>> peers_;
@@ -172,6 +173,10 @@ static craft::Raft::Config newTestConfig(uint64_t id, int64_t election, int64_t 
 
 static std::shared_ptr<Raft> newTestRaft(uint64_t id, uint64_t election, uint64_t heartbeat, std::shared_ptr<craft::Storage> storage) {
   auto cfg = newTestConfig(id, election, heartbeat, storage);
+  return std::make_shared<Raft>(craft::Raft::New(cfg));
+}
+
+static std::shared_ptr<Raft> newTestRaftWithConfig(craft::Raft::Config& cfg) {
   return std::make_shared<Raft>(craft::Raft::New(cfg));
 }
 
@@ -338,6 +343,14 @@ static std::shared_ptr<raftpb::Entry> makeEntry(uint64_t index, uint64_t term) {
   return entry;
 }
 
+static std::shared_ptr<raftpb::Entry> makeEntry(uint64_t index, uint64_t term, std::string data) {
+  auto entry = std::make_shared<raftpb::Entry>();
+  entry->set_index(index);
+  entry->set_term(term);
+  entry->set_data(data);
+  return entry;
+}
+
 static std::shared_ptr<Raft> entsWithConfig(NetWork::ConfigFunc config_func, std::vector<uint64_t> terms) {
   auto storage = std::make_shared<craft::MemoryStorage>();
   for (size_t i = 0; i < terms.size(); i++) {
@@ -373,6 +386,17 @@ static raftpb::ConfChangeV2 makeConfChange(uint64_t id, raftpb::ConfChangeType t
   cc.set_type(type);
   craft::ConfChangeI cci(std::move(cc));
   return cci.AsV2();
+}
+
+static std::string raftlogString(craft::RaftLog* l) {
+  std::stringstream ss;
+  ss << "committed: " << l->Committed() << std::endl;
+  ss << "applied: " << l->Applied() << std::endl;
+  auto ents = l->AllEntries();
+  for (size_t i = 0; i < ents.size(); i++) {
+    ss << "#" << i << ": " << ents[i]->SerializeAsString() << std::endl;
+  }
+  return ss.str();
 }
 
 TEST(Raft, ProgressLeader) {
@@ -850,6 +874,70 @@ TEST(Raft, PreVoteFromAnyState) {
   testVoteFromAnyState(raftpb::MessageType::MsgPreVote);
 }
 
+// nextEnts returns the appliable entries and updates the applied index
+static craft::EntryPtrs nextEnts(craft::Raft* raft, std::shared_ptr<craft::MemoryStorage> s) {
+	// Transfer all unstable entries to "stable" storage.
+  s->Append(raft->GetRaftLog()->UnstableEntries());
+  raft->GetRaftLog()->StableTo(raft->GetRaftLog()->LastIndex(), raft->GetRaftLog()->LastTerm());
+
+  auto ents = raft->GetRaftLog()->NextEnts();
+  raft->GetRaftLog()->AppliedTo(raft->GetRaftLog()->Committed());
+  return ents;
+}
+
+TEST(Raft, LogReplication) {
+  struct Test {
+    std::shared_ptr<NetWork> network;
+    craft::MsgPtrs msgs;
+    uint64_t wcommitted;
+  };
+  std::vector<Test> tests = {
+    {
+      NetWork::New({nullptr, nullptr, nullptr}),
+      {makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"})},
+      2,
+    },
+    {
+      NetWork::New({nullptr, nullptr, nullptr}),
+      {
+        makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"}),
+        makeMsg(1, 2, raftpb::MessageType::MsgHup),
+        makeMsg(1, 2, raftpb::MessageType::MsgProp, {"somedata"}),
+      },
+      4,
+    }
+  };
+
+  for (auto& tt : tests) {
+    craft::MsgPtrs props;
+    for (auto& m : tt.msgs) {
+      if (m->type() == raftpb::MessageType::MsgProp) {
+        props.emplace_back(std::make_shared<raftpb::Message>(*m));
+      }
+    }
+
+    tt.network->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+    for (auto& m : tt.msgs) {
+      tt.network->Send({m});
+    }
+
+    for (auto& p : tt.network->Peers()) {
+      auto sm = std::dynamic_pointer_cast<Raft>(p.second);
+      ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), tt.wcommitted);
+
+      craft::EntryPtrs ents;
+      for (auto& e : nextEnts(sm->Get(), tt.network->Storages()[p.first])) {
+        if (!e->data().empty()) {
+          ents.emplace_back(e);
+        }
+      }
+      for (size_t i = 0; i < props.size(); i++) {
+        ASSERT_EQ(ents[i]->data(), props[i]->entries(0).data());
+      }
+    }
+  }
+}
+
 // TestLearnerLogReplication tests that a learner can receive entries from the leader.
 TEST(Raft, LearnerLogReplication) {
   auto n1 = newTestLearnerRaft(1, 10, 1, newTestMemoryStorage({withPeers({1}), withLearners({2})}));
@@ -878,6 +966,275 @@ TEST(Raft, LearnerLogReplication) {
 
   auto match = n1->Get()->GetTracker().GetProgress(2)->Match();
   ASSERT_EQ(match, n2->Get()->GetRaftLog()->Committed());
+}
+
+TEST(Raft, SingleNodeCommit) {
+  auto tt = NetWork::New({nullptr});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 3);
+}
+
+// TestCannotCommitWithoutNewTermEntry tests the entries cannot be committed
+// when leader changes, no new proposal comes in and ChangeTerm proposal is
+// filtered.
+TEST(Raft, CannotCommitWithoutNewTermEntry) {
+  auto tt = NetWork::New({nullptr, nullptr, nullptr, nullptr, nullptr});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+
+  // 1 cannot reach 3,4,5
+  tt->Cut(1, 3);
+  tt->Cut(1, 4);
+  tt->Cut(1, 5);
+
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 1);
+
+  // network recovery
+  tt->Recover();
+  // avoid committing ChangeTerm proposal
+  tt->Ignore(raftpb::MessageType::MsgApp);
+
+  // elect 2 as the new leader with term 2
+  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgHup)});
+
+  // no log entries from previous term should be committed
+  sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 1);
+
+  tt->Recover();
+  // send heartbeat; reset wait
+  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgBeat)});
+  // append an entry at cuttent term
+  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgProp, {"some data"})});
+  // expect the committed to be advanced
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 5);
+}
+
+// TestCommitWithoutNewTermEntry tests the entries could be committed
+// when leader changes, no new proposal comes in.
+TEST(Raft, CommitWithoutNewTermEntry) {
+  auto tt = NetWork::New({nullptr, nullptr, nullptr, nullptr, nullptr});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+
+  // 1 cannot reach 3,4,5
+  tt->Cut(1, 3);
+  tt->Cut(1, 4);
+  tt->Cut(1, 5);
+
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 1);
+
+  // network recovery
+  tt->Recover();
+
+	// elect 2 as the new leader with term 2
+	// after append a ChangeTerm entry from the current term, all entries
+	// should be committed
+  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgHup)});
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 4);
+}
+
+TEST(Raft, DuelingCandidates) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  auto nt = NetWork::New({a, b, c});
+  nt->Cut(1, 3);
+
+  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+
+  // 1 becomes leader since it receives votes from 1 and 2
+  auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+	// 3 stays as candidate since it receives a vote from 3 and a rejection from 2
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kCandidate);
+
+  nt->Recover();
+
+	// candidate 3 now increases its term and tries to vote again
+	// we expect it to disrupt the leader 1 since it has a higher term
+	// 3 will be follower again since both 1 and 2 rejects its vote request since 3 does not have a long enough log
+  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1)});
+  auto wlog = std::make_shared<craft::RaftLog>(storage);
+  wlog->SetCommitted(1);
+  wlog->GetUnstable().SetOffset(2);
+
+  struct Test {
+    std::shared_ptr<Raft> sm;
+    craft::RaftStateType state;
+    uint64_t term;
+    std::shared_ptr<craft::RaftLog> raftlog;
+  };
+  std::vector<Test> tests = {
+    {a, craft::RaftStateType::kFollower, 2, wlog},
+    {b, craft::RaftStateType::kFollower, 2, wlog},
+    {c, craft::RaftStateType::kFollower, 2, craft::RaftLog::New(std::make_shared<craft::MemoryStorage>())},
+  };
+  for (size_t i = 0; i < tests.size(); i++) {
+    auto& tt = tests[i];
+    ASSERT_EQ(tt.sm->Get()->State(), tt.state);
+    ASSERT_EQ(tt.sm->Get()->Term(), tt.term);
+    auto base = raftlogString(tt.raftlog.get());
+    auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1+i]);
+    ASSERT_TRUE(sm != nullptr);
+    ASSERT_EQ(raftlogString(sm->Get()->GetRaftLog()), base);
+  }
+}
+
+TEST(Raft, DuelingPreCandidates) {
+  auto cfga = newTestConfig(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto cfgb = newTestConfig(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto cfgc = newTestConfig(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  cfga.pre_vote = true;
+  cfgb.pre_vote = true;
+  cfgc.pre_vote = true;
+  auto a = newTestRaftWithConfig(cfga);
+  auto b = newTestRaftWithConfig(cfgb);
+  auto c = newTestRaftWithConfig(cfgc);
+
+  auto nt = NetWork::New({a, b, c});
+  nt->Cut(1, 3);
+
+  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+
+  // 1 becomes leader since it receives votes from 1 and 2
+  auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+  // 3 campaigns then reverts to follower when its PreVote is rejected
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+
+  nt->Recover();
+
+	// Candidate 3 now increases its term and tries to vote again.
+	// With PreVote, it does not disrupt the leader.
+  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1)});
+  auto wlog = std::make_shared<craft::RaftLog>(storage);
+  wlog->SetCommitted(1);
+  wlog->GetUnstable().SetOffset(2);
+  struct Test {
+    std::shared_ptr<Raft> sm;
+    craft::RaftStateType state;
+    uint64_t term;
+    std::shared_ptr<craft::RaftLog> raftlog;
+  };
+  std::vector<Test> tests = {
+    {a, craft::RaftStateType::kLeader, 1, wlog},
+    {b, craft::RaftStateType::kFollower, 1, wlog},
+    {c, craft::RaftStateType::kFollower, 1, craft::RaftLog::New(std::make_shared<craft::MemoryStorage>())},
+  };
+  for (size_t i = 0; i < tests.size(); i++) {
+    auto& tt = tests[i];
+    ASSERT_EQ(tt.sm->Get()->State(), tt.state);
+    ASSERT_EQ(tt.sm->Get()->Term(), tt.term);
+    auto base = raftlogString(tt.raftlog.get());
+    auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1+i]);
+    ASSERT_TRUE(sm != nullptr);
+    ASSERT_EQ(raftlogString(sm->Get()->GetRaftLog()), base);
+  }
+}
+
+TEST(Raft, CandidateConcede) {
+  auto tt = NetWork::New({nullptr, nullptr, nullptr});
+  tt->Isolate(1);
+
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+
+  // heal the partition
+  tt->Recover();
+  // send heartbeat; reset wait
+  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgBeat)});
+
+  std::string data = "force follower";
+  // send a proposal to 3 to flush out a MsgApp to 1
+  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgProp, {data})});
+  // send heartbeat; flush out commit
+  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgBeat)});
+
+  auto a = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(a->Get()->Term(), 1);
+
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1), makeEntry(2, 1, data)});
+  auto l = std::make_shared<craft::RaftLog>(storage);
+  l->SetCommitted(2);
+  l->GetUnstable().SetOffset(3);
+  auto want_log = raftlogString(l.get());
+  for (auto& p  : tt->Peers()) {
+    auto sm = std::dynamic_pointer_cast<Raft>(p.second);
+    ASSERT_TRUE(sm != nullptr);
+    ASSERT_EQ(raftlogString(sm->Get()->GetRaftLog()), want_log);
+  }
+}
+
+TEST(Raft, SingleNodeCandidate) {
+  auto tt = NetWork::New({nullptr});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+}
+
+TEST(Raft, SingleNodePreCandidate) {
+  auto tt = NetWork::NewWithConfig(preVoteConfig, {nullptr});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+}
+
+TEST(Raft, OldMessages) {
+  auto tt = NetWork::New({nullptr, nullptr, nullptr});
+  // make 0 leader @ term 3
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgHup)});
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+	// pretend we're an old leader trying to make progress; this entry is expected to be ignored.
+  auto m = makeMsg(2, 1, raftpb::MessageType::MsgApp);
+  m->set_term(2);
+  auto e = m->add_entries();
+  e->set_index(3);
+  e->set_term(2);
+  tt->Send({m});
+  // commit a new entry
+  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"})});
+
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1), makeEntry(2, 2),
+                       makeEntry(3, 3), makeEntry(4, 3, "somedata")});
+  auto ilog = std::make_shared<craft::RaftLog>(storage);
+  ilog->SetCommitted(4);
+  ilog->GetUnstable().SetOffset(5);
+  auto base = raftlogString(ilog.get());
+  for (auto& p : tt->Peers()) {
+    auto sm = std::dynamic_pointer_cast<Raft>(p.second);
+    ASSERT_TRUE(sm != nullptr);
+    ASSERT_EQ(base, raftlogString(sm->Get()->GetRaftLog()));
+  }
 }
 
 int main(int argc, char** argv) {
