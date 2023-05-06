@@ -401,6 +401,14 @@ class Raft {
 
   uint64_t Vote() const { return vote_; }
 
+  void SetElectionElapsed(int64_t election_elapsed) {
+    election_elapsed_ = election_elapsed;
+  }
+
+  void SetStep(StepFunc&& step) {
+    step_ = std::move(step);
+  }
+
  private:
   uint64_t id_;
 

@@ -30,6 +30,127 @@ static int random(int low, int high) {
   return dist(gen);
 }
 
+class Message {
+ public:
+  Message() {
+    m = std::make_shared<raftpb::Message>();
+  }
+
+  Message& Type(raftpb::MessageType type) {
+    m->set_type(type);
+    return *this;
+  }
+
+  Message& From(uint64_t from) {
+    m->set_from(from);
+    return *this;
+  }
+
+  Message& To(uint64_t to) {
+    m->set_to(to);
+    return *this;
+  }
+
+  Message& Term(uint64_t term) {
+    m->set_term(term);
+    return *this;
+  }
+
+  Message& LogTerm(uint64_t log_term) {
+    m->set_logterm(log_term);
+    return *this;
+  }
+
+  Message& Index(uint64_t index) {
+    m->set_index(index);
+    return *this;
+  }
+
+  Message& Entries(craft::EntryPtrs ents) {
+    for (auto ent : ents) {
+      m->add_entries()->CopyFrom(*ent);
+    }
+    return *this;
+  }
+
+  Message& Commit(uint64_t commit) {
+    m->set_commit(commit);
+    return *this;
+  }
+
+  Message& Snapshot(craft::SnapshotPtr snapshot) {
+    m->mutable_snapshot()->CopyFrom(*snapshot);
+    return *this;
+  }
+
+  Message& Reject(bool reject) {
+    m->set_reject(reject);
+    return *this;
+  }
+
+  Message& RejectHint(uint64_t reject_hint) {
+    m->set_reject(reject_hint);
+    return *this;
+  }
+
+  Message& Context(std::string context) {
+    m->set_context(context);
+    return *this;
+  }
+
+  craft::MsgPtr operator()() {
+    return get();
+  }
+
+  craft::MsgPtr get() {
+    return m;
+  }
+
+ private:
+  craft::MsgPtr m;
+};
+
+class Entry {
+ public:
+  Entry() {
+    ent = std::make_shared<raftpb::Entry>();
+  }
+
+  Entry& Term(uint64_t term) {
+    ent->set_term(term);
+    return *this;
+  }
+
+  Entry& Index(uint64_t index) {
+    ent->set_index(index);
+    return *this;
+  }
+
+  Entry& Type(raftpb::EntryType type) {
+    ent->set_type(type);
+    return *this;
+  }
+
+  Entry& Data(std::string data) {
+    ent->set_data(data);
+    return *this;
+  }
+
+  craft::EntryPtr operator()() {
+    return get();
+  }
+
+  craft::EntryPtr get() {
+    return ent;
+  }
+
+ private:
+  craft::EntryPtr ent;
+};
+
+#define NEW_MSG() (Message())
+#define NEW_ENT() (Entry())
+
 class StateMachince {
  public:
   virtual craft::Status Step(craft::MsgPtr m) = 0;
@@ -304,57 +425,11 @@ craft::MsgPtrs NetWork::Filter(craft::MsgPtrs msgs) {
   return mm;
 }
 
-static std::shared_ptr<raftpb::Message> makeMsg(uint64_t from, uint64_t to, raftpb::MessageType type) {
-  auto msg = std::make_shared<raftpb::Message>();
-  msg->set_from(from);
-  msg->set_to(to);
-  msg->set_type(type);
-  return msg;
-}
-
-static std::shared_ptr<raftpb::Message> makeMsg(uint64_t from, uint64_t to, raftpb::MessageType type, std::vector<std::string> ents) {
-  auto msg = std::make_shared<raftpb::Message>();
-  msg->set_from(from);
-  msg->set_to(to);
-  msg->set_type(type);
-  for (auto& ent : ents) {
-    auto e = msg->add_entries();
-    e->set_data(ent);
-  }
-  return msg;
-}
-
-static std::shared_ptr<raftpb::Message> makeMsg(uint64_t from, uint64_t to, raftpb::MessageType type, craft::EntryPtrs ents) {
-  auto msg = std::make_shared<raftpb::Message>();
-  msg->set_from(from);
-  msg->set_to(to);
-  msg->set_type(type);
-  for (auto& ent : ents) {
-    auto e = msg->add_entries();
-    e->CopyFrom(*ent);
-  }
-  return msg;
-}
-
-static std::shared_ptr<raftpb::Entry> makeEntry(uint64_t index, uint64_t term) {
-  auto entry = std::make_shared<raftpb::Entry>();
-  entry->set_index(index);
-  entry->set_term(term);
-  return entry;
-}
-
-static std::shared_ptr<raftpb::Entry> makeEntry(uint64_t index, uint64_t term, std::string data) {
-  auto entry = std::make_shared<raftpb::Entry>();
-  entry->set_index(index);
-  entry->set_term(term);
-  entry->set_data(data);
-  return entry;
-}
-
 static std::shared_ptr<Raft> entsWithConfig(NetWork::ConfigFunc config_func, std::vector<uint64_t> terms) {
   auto storage = std::make_shared<craft::MemoryStorage>();
   for (size_t i = 0; i < terms.size(); i++) {
-    storage->Append({makeEntry(static_cast<uint64_t>(i + 1), terms[i])});
+    // storage->Append({makeEntry(static_cast<uint64_t>(i + 1), terms[i])});
+    storage->Append({NEW_ENT().Index(i+1).Term(terms[i])()});
   }
   auto cfg = newTestConfig(1, 5, 1, storage);
   if (config_func) {
@@ -406,7 +481,7 @@ TEST(Raft, ProgressLeader) {
   r->Get()->GetTracker().GetProgress(2)->BecomeReplicate();
 
   // Send proposals to r1. The first 5 entries should be appended to the log.
-  auto prop_msg = makeMsg(1, 1, raftpb::MessageType::MsgProp, {"foo"});
+  auto prop_msg = NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("foo")()})();
   for (size_t i = 0; i < 5; i++) {
     auto pr = r->Get()->GetTracker().GetProgress(r->Get()->ID());
     ASSERT_EQ(pr->State(), craft::StateType::kReplicate);
@@ -424,11 +499,11 @@ TEST(Raft, ProgressResumeByHeartbeatResp) {
 
   r->Get()->GetTracker().GetProgress(2)->SetProbeSent(true);
 
-  r->Step(makeMsg(1, 1, raftpb::MessageType::MsgBeat));
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)());
   ASSERT_TRUE(r->Get()->GetTracker().GetProgress(2)->ProbeSent());
 
   r->Get()->GetTracker().GetProgress(2)->BecomeReplicate();
-  r->Step(makeMsg(2, 1, raftpb::MessageType::MsgHeartbeatResp));
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeatResp)());
   ASSERT_FALSE(r->Get()->GetTracker().GetProgress(2)->ProbeSent());
 }
 
@@ -436,9 +511,9 @@ TEST(Raft, ProgressPaused) {
   auto r = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2})}));
   r->Get()->BecomeCandidate();
   r->Get()->BecomeLeader();
-  r->Step(makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"}));
-  r->Step(makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"}));
-  r->Step(makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"}));
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
 
   auto ms = r->ReadMessages();
   ASSERT_EQ(ms.size(), 1);
@@ -459,7 +534,7 @@ TEST(Raft, ProgressFlowControl) {
   r->GetTracker().GetProgress(2)->BecomeProbe();
   std::string blob(1000, 'a');
   for (size_t i = 0; i < 10; i++) {
-    r->Step(makeMsg(1, 1, raftpb::MessageType::MsgProp, {blob}));
+    r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data(blob)()})());
   }
 
   auto ms = r->ReadAndClearMsgs();
@@ -474,9 +549,7 @@ TEST(Raft, ProgressFlowControl) {
 
 	// When this append is acked, we change to replicate state and can
 	// send multiple messages at once.
-  auto m = makeMsg(2, 1, raftpb::MessageType::MsgAppResp);
-  m->set_index(ms[0]->entries(1).index());
-  r->Step(m);
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp).Index(ms[0]->entries(1).index())());
   ms = r->ReadAndClearMsgs();
   ASSERT_EQ(ms.size(), 3);
   for (auto m : ms) {
@@ -486,9 +559,7 @@ TEST(Raft, ProgressFlowControl) {
 
 	// Ack all three of those messages together and get the last two
 	// messages (containing three entries).
-  auto m2 = makeMsg(2, 1, raftpb::MessageType::MsgAppResp);
-  m2->set_index(ms[2]->entries(1).index());
-  r->Step(m2);
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp).Index(ms[2]->entries(1).index())());
   ms = r->ReadAndClearMsgs();
   ASSERT_EQ(ms.size(), 2);
   for (auto m : ms) {
@@ -505,8 +576,7 @@ TEST(Raft, UncommittedEntryLimit) {
 	// expect them, or because the final tally ends up nonzero. (At the time of
 	// writing, the former).
   size_t max_entries = 1024;
-  auto test_entry = std::make_shared<raftpb::Entry>();
-  test_entry->set_data("testdata");
+  auto test_entry = NEW_ENT().Data("testdata")();
   size_t max_entry_size = max_entries * craft::Util::PayloadSize(test_entry);
 
   ASSERT_EQ(craft::Util::PayloadSize(std::make_shared<raftpb::Entry>()), 0);
@@ -528,17 +598,13 @@ TEST(Raft, UncommittedEntryLimit) {
   // Send proposals to r1. The first 5 entries should be appended to the log.
   craft::EntryPtrs prop_ents;
   for (size_t i = 0; i < max_entries; i++) {
-    auto prop_msg = makeMsg(1, 1, raftpb::MessageType::MsgProp, {test_entry});
-    auto s = r->Step(prop_msg);
+    auto s = r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({test_entry})());
     ASSERT_TRUE(s.IsOK());
     prop_ents.push_back(test_entry);
   }
 
-  std::cout << r->UncommittedSize() << std::endl;
-
   // Send one more proposal to r1. It should be rejected.
-  auto prop_msg = makeMsg(1, 1, raftpb::MessageType::MsgProp, {test_entry});
-  auto s = r->Step(prop_msg);
+  auto s = r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({test_entry})());
   ASSERT_FALSE(s.IsOK());
   ASSERT_STREQ(s.Str(), craft::kErrProposalDropped);
 
@@ -555,20 +621,19 @@ TEST(Raft, UncommittedEntryLimit) {
   for (size_t i = 0; i < max_entry_size * 2; i++) {
     prop_ents.push_back(test_entry);
   }
-  auto prop_msg_large = makeMsg(1, 1, raftpb::MessageType::MsgProp, prop_ents);
-  s = r->Step(prop_msg_large);
+
+  s = r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries(prop_ents)());
   ASSERT_TRUE(s.IsOK());
 
   // Send one more proposal to r1. It should be rejected, again.
-  prop_msg = makeMsg(1, 1, raftpb::MessageType::MsgProp, {test_entry});
-  s = r->Step(prop_msg);
+  s = r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({test_entry})());
   ASSERT_FALSE(s.IsOK());
   ASSERT_STREQ(s.Str(), craft::kErrProposalDropped);
 
 	// But we can always append an entry with no Data. This is used both for the
 	// leader's first empty entry and for auto-transitioning out of joint config
 	// states.
-  s = r->Step(makeMsg(1, 1, raftpb::MessageType::MsgProp, {""}));
+  s = r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("")()})());
   ASSERT_TRUE(s.IsOK());
 
 	// Read messages and reduce the uncommitted size as if we had committed
@@ -619,7 +684,7 @@ static void testLeaderElection(bool pre_vote) {
   };
 
   for (auto& tt : tests) {
-    tt.network->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+    tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
     auto sm = std::dynamic_pointer_cast<Raft>(tt.network->Peers()[1])->Get();
     ASSERT_EQ(sm->State(), tt.state);
     ASSERT_EQ(sm->Term(), tt.exp_term);
@@ -674,7 +739,7 @@ TEST(Raft, LearnerPromotion) {
   ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
   ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
 
-  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgBeat)});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)()});
 
   n1->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddNode));
   n2->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddNode));
@@ -686,7 +751,7 @@ TEST(Raft, LearnerPromotion) {
     n2->Get()->Tick();
   }
 
-  nt->Send({makeMsg(2, 2, raftpb::MessageType::MsgBeat)});
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgBeat)()});
   ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kFollower);
   ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kLeader);
 }
@@ -724,7 +789,7 @@ static void testLeaderCycle(bool pre_vote) {
   }
   auto n = NetWork::NewWithConfig(cfg, {nullptr, nullptr, nullptr});
   for (uint64_t campaigner_id = 1; campaigner_id <= 3; campaigner_id++) {
-    n->Send({makeMsg(campaigner_id, campaigner_id, raftpb::MessageType::MsgHup)});
+    n->Send({NEW_MSG().From(campaigner_id).To(campaigner_id).Type(raftpb::MessageType::MsgHup)()});
 
     for (auto& p : n->Peers()) {
       auto sm = std::dynamic_pointer_cast<Raft>(p.second);
@@ -775,13 +840,13 @@ static void testLeaderElectionOverwriteNewerLogs(bool pre_vote) {
 	// Node 1 campaigns. The election fails because a quorum of nodes
 	// know about the election that already happened at term 2. Node 1's
 	// term is pushed ahead to 2.
-  n->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  n->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
   auto sm1 = std::dynamic_pointer_cast<Raft>(n->Peers()[1]);
   ASSERT_EQ(sm1->Get()->State(), craft::RaftStateType::kFollower);
   ASSERT_EQ(sm1->Get()->Term(), 2);
 
   // Node 1 campaigns again with a higher term. This time it succeeds.
-  n->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  n->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
   ASSERT_EQ(sm1->Get()->State(), craft::RaftStateType::kLeader);
   ASSERT_EQ(sm1->Get()->Term(), 3);
 
@@ -833,14 +898,7 @@ static void testVoteFromAnyState(raftpb::MessageType vt) {
 		// past its initial value.
     auto orig_term = r->Get()->Term();
     auto new_term = r->Get()->Term() + 1;
-    auto msg = std::make_shared<raftpb::Message>();
-    msg->set_from(2);
-    msg->set_to(1);
-    msg->set_type(vt);
-    msg->set_term(new_term);
-    msg->set_logterm(new_term);
-    msg->set_index(42);
-    auto s = r->Step(msg);
+    auto s = r->Step(NEW_MSG().From(2).To(1).Type(vt).Term(new_term).LogTerm(new_term).Index(42)());
     ASSERT_TRUE(s.IsOK());
     ASSERT_EQ(r->Get()->Msgs().size(), 1);
     auto resp = r->Get()->Msgs()[0];
@@ -894,15 +952,15 @@ TEST(Raft, LogReplication) {
   std::vector<Test> tests = {
     {
       NetWork::New({nullptr, nullptr, nullptr}),
-      {makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"})},
+      {NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})()},
       2,
     },
     {
       NetWork::New({nullptr, nullptr, nullptr}),
       {
-        makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"}),
-        makeMsg(1, 2, raftpb::MessageType::MsgHup),
-        makeMsg(1, 2, raftpb::MessageType::MsgProp, {"somedata"}),
+        NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})(),
+        NEW_MSG().From(1).To(2).Type(raftpb::MessageType::MsgHup)(),
+        NEW_MSG().From(1).To(2).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})(),
       },
       4,
     }
@@ -916,7 +974,7 @@ TEST(Raft, LogReplication) {
       }
     }
 
-    tt.network->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+    tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
     for (auto& m : tt.msgs) {
       tt.network->Send({m});
     }
@@ -953,14 +1011,14 @@ TEST(Raft, LearnerLogReplication) {
     n1->Get()->Tick();
   }
 
-  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgBeat)});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)()});
 
 	// n1 is leader and n2 is learner
   ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
   ASSERT_TRUE(n2->Get()->IsLearner());
 
   auto next_committed = n1->Get()->GetRaftLog()->Committed() + 1;
-  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"})});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})()});
   ASSERT_EQ(n1->Get()->GetRaftLog()->Committed(), next_committed);
   ASSERT_EQ(n1->Get()->GetRaftLog()->Committed(), n2->Get()->GetRaftLog()->Committed());
 
@@ -970,9 +1028,9 @@ TEST(Raft, LearnerLogReplication) {
 
 TEST(Raft, SingleNodeCommit) {
   auto tt = NetWork::New({nullptr});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
 
   auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
   ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 3);
@@ -983,15 +1041,16 @@ TEST(Raft, SingleNodeCommit) {
 // filtered.
 TEST(Raft, CannotCommitWithoutNewTermEntry) {
   auto tt = NetWork::New({nullptr, nullptr, nullptr, nullptr, nullptr});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  // tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
 
   // 1 cannot reach 3,4,5
   tt->Cut(1, 3);
   tt->Cut(1, 4);
   tt->Cut(1, 5);
 
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
 
   auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
   ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 1);
@@ -1002,7 +1061,7 @@ TEST(Raft, CannotCommitWithoutNewTermEntry) {
   tt->Ignore(raftpb::MessageType::MsgApp);
 
   // elect 2 as the new leader with term 2
-  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
 
   // no log entries from previous term should be committed
   sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[2]);
@@ -1010,9 +1069,9 @@ TEST(Raft, CannotCommitWithoutNewTermEntry) {
 
   tt->Recover();
   // send heartbeat; reset wait
-  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgBeat)});
+  tt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgBeat)()});
   // append an entry at cuttent term
-  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
   // expect the committed to be advanced
   ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 5);
 }
@@ -1021,15 +1080,15 @@ TEST(Raft, CannotCommitWithoutNewTermEntry) {
 // when leader changes, no new proposal comes in.
 TEST(Raft, CommitWithoutNewTermEntry) {
   auto tt = NetWork::New({nullptr, nullptr, nullptr, nullptr, nullptr});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
 
   // 1 cannot reach 3,4,5
   tt->Cut(1, 3);
   tt->Cut(1, 4);
   tt->Cut(1, 5);
 
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"some data"})});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
 
   auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
   ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 1);
@@ -1040,7 +1099,7 @@ TEST(Raft, CommitWithoutNewTermEntry) {
 	// elect 2 as the new leader with term 2
 	// after append a ChangeTerm entry from the current term, all entries
 	// should be committed
-  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
   ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 4);
 }
 
@@ -1052,8 +1111,8 @@ TEST(Raft, DuelingCandidates) {
   auto nt = NetWork::New({a, b, c});
   nt->Cut(1, 3);
 
-  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
-  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
   // 1 becomes leader since it receives votes from 1 and 2
   auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
@@ -1068,10 +1127,10 @@ TEST(Raft, DuelingCandidates) {
 	// candidate 3 now increases its term and tries to vote again
 	// we expect it to disrupt the leader 1 since it has a higher term
 	// 3 will be follower again since both 1 and 2 rejects its vote request since 3 does not have a long enough log
-  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
   auto storage = std::make_shared<craft::MemoryStorage>();
-  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1)});
+  storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)()});
   auto wlog = std::make_shared<craft::RaftLog>(storage);
   wlog->SetCommitted(1);
   wlog->GetUnstable().SetOffset(2);
@@ -1112,8 +1171,8 @@ TEST(Raft, DuelingPreCandidates) {
   auto nt = NetWork::New({a, b, c});
   nt->Cut(1, 3);
 
-  nt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
-  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
   // 1 becomes leader since it receives votes from 1 and 2
   auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
@@ -1127,10 +1186,10 @@ TEST(Raft, DuelingPreCandidates) {
 
 	// Candidate 3 now increases its term and tries to vote again.
 	// With PreVote, it does not disrupt the leader.
-  nt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
   auto storage = std::make_shared<craft::MemoryStorage>();
-  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1)});
+  storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)()});
   auto wlog = std::make_shared<craft::RaftLog>(storage);
   wlog->SetCommitted(1);
   wlog->GetUnstable().SetOffset(2);
@@ -1160,26 +1219,26 @@ TEST(Raft, CandidateConcede) {
   auto tt = NetWork::New({nullptr, nullptr, nullptr});
   tt->Isolate(1);
 
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
-  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  tt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
   // heal the partition
   tt->Recover();
   // send heartbeat; reset wait
-  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgBeat)});
+  tt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgBeat)()});
 
   std::string data = "force follower";
   // send a proposal to 3 to flush out a MsgApp to 1
-  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgProp, {data})});
+  tt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data(data)()})()});
   // send heartbeat; flush out commit
-  tt->Send({makeMsg(3, 3, raftpb::MessageType::MsgBeat)});
+  tt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgBeat)()});
 
   auto a = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
   ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kFollower);
   ASSERT_EQ(a->Get()->Term(), 1);
 
   auto storage = std::make_shared<craft::MemoryStorage>();
-  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1), makeEntry(2, 1, data)});
+  storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1).Data(data)()});
   auto l = std::make_shared<craft::RaftLog>(storage);
   l->SetCommitted(2);
   l->GetUnstable().SetOffset(3);
@@ -1193,7 +1252,7 @@ TEST(Raft, CandidateConcede) {
 
 TEST(Raft, SingleNodeCandidate) {
   auto tt = NetWork::New({nullptr});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
 
   auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
   ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
@@ -1201,7 +1260,7 @@ TEST(Raft, SingleNodeCandidate) {
 
 TEST(Raft, SingleNodePreCandidate) {
   auto tt = NetWork::NewWithConfig(preVoteConfig, {nullptr});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
 
   auto sm = std::dynamic_pointer_cast<Raft>(tt->Peers()[1]);
   ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
@@ -1210,22 +1269,18 @@ TEST(Raft, SingleNodePreCandidate) {
 TEST(Raft, OldMessages) {
   auto tt = NetWork::New({nullptr, nullptr, nullptr});
   // make 0 leader @ term 3
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
-  tt->Send({makeMsg(2, 2, raftpb::MessageType::MsgHup)});
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgHup)});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  tt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
 	// pretend we're an old leader trying to make progress; this entry is expected to be ignored.
-  auto m = makeMsg(2, 1, raftpb::MessageType::MsgApp);
-  m->set_term(2);
-  auto e = m->add_entries();
-  e->set_index(3);
-  e->set_term(2);
-  tt->Send({m});
+  tt->Send({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgApp).Term(2).Entries({NEW_ENT().Index(3).Term(2)()})()});
   // commit a new entry
-  tt->Send({makeMsg(1, 1, raftpb::MessageType::MsgProp, {"somedata"})});
+  tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})()});
 
   auto storage = std::make_shared<craft::MemoryStorage>();
-  storage->SetEntries({makeEntry(0, 0), makeEntry(1, 1), makeEntry(2, 2),
-                       makeEntry(3, 3), makeEntry(4, 3, "somedata")});
+  storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)(),
+                       NEW_ENT().Index(2).Term(2)(), NEW_ENT().Index(3).Term(3)(),
+                       NEW_ENT().Index(4).Term(3).Data("somedata")()});
   auto ilog = std::make_shared<craft::RaftLog>(storage);
   ilog->SetCommitted(4);
   ilog->GetUnstable().SetOffset(5);
@@ -1236,6 +1291,317 @@ TEST(Raft, OldMessages) {
     ASSERT_EQ(base, raftlogString(sm->Get()->GetRaftLog()));
   }
 }
+
+// TestOldMessagesReply - optimization - reply with new term.
+TEST(Raft, Propposal) {
+  struct Test {
+    std::shared_ptr<NetWork> network;
+    bool success;
+  };
+  std::vector<Test> tests = {
+    {NetWork::New({nullptr, nullptr, nullptr}), true},
+    {NetWork::New({nullptr, nullptr, BlackHole::New()}), true},
+    {NetWork::New({nullptr, BlackHole::New(), BlackHole::New()}), false},
+    {NetWork::New({nullptr, BlackHole::New(), BlackHole::New(), nullptr}), false},
+    {NetWork::New({nullptr, BlackHole::New(), BlackHole::New(), nullptr, nullptr}), true},
+  };
+
+  for (size_t i = 0; i < tests.size(); i++) {
+    auto& tt = tests[i];
+    std::string data = "somedata";
+
+    // promote 1 to become leader
+    tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+    tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data(data)()})()});
+
+    std::shared_ptr<craft::RaftLog> want_log = craft::RaftLog::New(std::make_shared<craft::MemoryStorage>());
+    if (tt.success) {
+      auto storage = std::make_shared<craft::MemoryStorage>();
+      storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1).Data("somedata")()});
+      want_log = std::make_shared<craft::RaftLog>(storage);
+      want_log->SetCommitted(2);
+      want_log->GetUnstable().SetOffset(3);
+    }
+
+    auto base = raftlogString(want_log.get());
+    for (auto& p : tt.network->Peers()) {
+      auto sm = std::dynamic_pointer_cast<Raft>(p.second);
+      if (sm) {
+        ASSERT_EQ(raftlogString(sm->Get()->GetRaftLog()), base);
+      } else {
+        std::cout << "#" << i << ": peer " << p.first << " empty log" << std::endl;
+      }
+    }
+    auto sm = std::dynamic_pointer_cast<Raft>(tt.network->Peers()[1]);
+    ASSERT_EQ(sm->Get()->Term(), 1);
+  }
+}
+
+TEST(Raft, ProposalByProxy) {
+  struct Test {
+    std::shared_ptr<NetWork> network;
+  };
+  std::vector<Test> tests = {
+    {NetWork::New({nullptr, nullptr, nullptr})},
+    {NetWork::New({nullptr, nullptr, BlackHole::New()})},
+  };
+
+  for (size_t i = 0; i < tests.size(); i++) {
+    auto& tt = tests[i];
+    // promote 1 the leader
+    tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+    // propose via follower
+    tt.network->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})()});
+
+    auto storage = std::make_shared<craft::MemoryStorage>();
+    storage->SetEntries({NEW_ENT().Index(0).Term(0)(),
+                         NEW_ENT().Index(1).Term(1)(),
+                         NEW_ENT().Index(2).Term(1).Data("somedata")()});
+    auto want_log = std::make_shared<craft::RaftLog>(storage);
+    want_log->SetCommitted(2);
+    want_log->GetUnstable().SetOffset(3);
+    auto base = raftlogString(want_log.get());
+    for (auto& p : tt.network->Peers()) {
+      auto sm = std::dynamic_pointer_cast<Raft>(p.second);
+      if (sm) {
+        ASSERT_EQ(raftlogString(sm->Get()->GetRaftLog()), base);
+      } else {
+        std::cout << "#" << i << ": peer " << p.first << " empty log" << std::endl;
+      }
+    }
+    auto sm = std::dynamic_pointer_cast<Raft>(tt.network->Peers()[1]);
+    ASSERT_EQ(sm->Get()->Term(), 1);
+  }
+}
+
+TEST(Raft, Commit) {
+  struct Test {
+    std::vector<uint64_t> matches;
+    craft::EntryPtrs logs;
+    uint64_t sm_term;
+    uint64_t w;
+  };
+  std::vector<Test> tests = {
+    // single
+    {{1}, {NEW_ENT().Index(1).Term(1)()}, 1, 1},
+    {{1}, {NEW_ENT().Index(1).Term(1)()}, 2, 0},
+    {{2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(2)()}, 2, 2},
+    {{1}, {NEW_ENT().Index(1).Term(2)()}, 2, 1},
+    // odd
+    {{2, 1, 1}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(2)()}, 1, 1},
+    {{2, 1, 1}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1)()}, 2, 0},
+    {{2, 1, 2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(2)()}, 2, 2},
+    {{2, 1, 2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1)()}, 2, 0},
+    // even
+    {{2, 1, 1, 1}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(2)()}, 1, 1},
+    {{2, 1, 1, 1}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1)()}, 2, 0},
+    {{2, 1, 1, 2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(2)()}, 1, 1},
+    {{2, 1, 1, 2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1)()}, 2, 0},
+    {{2, 1, 2, 2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(2)()}, 2, 2},
+    {{2, 1, 2, 2}, {NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1)()}, 2, 0},
+  };
+  for (auto& tt : tests) {
+    auto storage = newTestMemoryStorage({withPeers({1})});
+    storage->Append(tt.logs);
+    raftpb::HardState hard_state;
+    hard_state.set_term(tt.sm_term);
+    storage->SetHardState(hard_state);
+
+    auto sm = newTestRaft(1, 10, 2, storage);
+    for (size_t j = 0; j < tt.matches.size(); j++) {
+      auto id = j + 1;
+      if (id > 1) {
+        sm->Get()->ApplyConfChange(makeConfChange(id, raftpb::ConfChangeAddNode));
+      }
+      auto pr = sm->Get()->GetTracker().GetProgress(id);
+      pr->SetMatch(tt.matches[j]);
+      pr->SetNext(tt.matches[j]+1);
+    }
+    sm->Get()->MaybeCommit();
+    ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), tt.w);
+  }
+}
+
+TEST(Raft, PastElectionTimeout) {
+  struct Test {
+    int64_t elapse;
+    double wprobability;
+    bool round; 
+  };
+  std::vector<Test> tests = {
+    {5, 0, false},
+    {10, 0.1, true},
+    {13, 0.4, true},
+    {15, 0.6, true},
+    {18, 0.9, true},
+    {20, 1, false},
+  };
+  for (auto& tt : tests) {
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+    sm->Get()->SetElectionElapsed(tt.elapse);
+    double c = 0;
+    for (int j = 0; j < 10000; j++) {
+      sm->Get()->ResetRandomizedElectionTimeout();
+      if (sm->Get()->PastElectionTimeout()) {
+        c++;
+      }
+    }
+
+    double got = c / 10000.0;
+    if (tt.round) {
+      got = std::floor(got*10+0.5) / 10;
+    }
+    ASSERT_EQ(got, tt.wprobability);
+  }
+}
+
+// ensure that the Step function ignores the message from old term and does not pass it to the
+// actual stepX function.
+TEST(Raft, StepIgnoreOldTermMsg) {
+  bool called = false;
+  auto fake_step = [&called](craft::MsgPtr m) {
+    called = true;
+    return craft::Status::OK();
+  };
+  auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+  sm->Get()->SetStep(std::move(fake_step));
+  sm->Get()->SetTerm(2);
+  auto m = std::make_shared<raftpb::Message>();
+  m->set_type(raftpb::MessageType::MsgApp);
+  m->set_term(sm->Get()->Term() - 1);
+  sm->Step(m);
+  ASSERT_FALSE(called);
+}
+
+// TestHandleMsgApp ensures:
+// 1. Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm.
+// 2. If an existing entry conflicts with a new one (same index but different terms),
+//    delete the existing entry and all that follow it; append any new entries not already in the log.
+// 3. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry).
+TEST(Raft, HandleMsgApp) {
+  struct Test {
+    craft::MsgPtr m;
+    uint64_t windex;
+    uint64_t wcommit;
+    bool wreject;
+  };
+  std::vector<Test> tests = {
+    // Ensure 1
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(3).Index(2).Commit(3)(), 2, 0, true},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(3).Index(3).Commit(3)(), 2, 0, true},
+    // Ensure 2
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(1).Index(1).Commit(1)(), 2, 1, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(0).Index(0).Commit(1)
+      .Entries({NEW_ENT().Index(1).Term(2)()})(), 1, 1, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(2).Index(2).Commit(3)
+      .Entries({NEW_ENT().Index(3).Term(2)(), NEW_ENT().Index(4).Term(2)()})(),
+      4, 3, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(2).Index(2).Commit(4)
+      .Entries({NEW_ENT().Index(3).Term(2)()})(), 3, 3, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(1).Index(1).Commit(4)
+      .Entries({NEW_ENT().Index(2).Term(2)()})(), 2, 2, false},
+    // Ensure 3
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(1).LogTerm(1).Index(1).Commit(3)(), 2, 1, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(1).LogTerm(1).Index(1).Commit(3)
+      .Entries({NEW_ENT().Index(2).Term(2)()})(), 2, 2, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(2).Index(2).Commit(3)(), 2, 2, false},
+    {NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2).LogTerm(2).Index(2).Commit(4)(), 2, 2, false}, 
+  };
+
+  for (auto& tt : tests) {
+    auto storage = newTestMemoryStorage({withPeers({1})});
+    storage->Append({NEW_ENT().Index(1).Term(1)(),
+                     NEW_ENT().Index(2).Term(2)()});
+    auto sm = newTestRaft(1, 10, 1, storage);
+    sm->Get()->BecomeFollower(2, craft::Raft::kNone);
+
+    sm->Get()->HandleAppendEntries(tt.m);
+    ASSERT_EQ(sm->Get()->GetRaftLog()->LastIndex(), tt.windex);
+    ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), tt.wcommit);
+    auto m = sm->ReadMessages();
+    ASSERT_EQ(m.size(), 1);
+    ASSERT_EQ(m[0]->reject(), tt.wreject);
+  }
+}
+
+// TestHandleHeartbeat ensures that the follower commits to the commit in the message.
+TEST(Raft, HandleHeartbeat) {
+  uint64_t commit = 2;
+  struct Test {
+    craft::MsgPtr m;
+    uint64_t wcommit;
+  };
+  std::vector<Test> tests = {
+    {NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeat).Commit(commit + 1)(), commit + 1},
+    {NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeat).Commit(commit - 1)(), commit},  // do not decrease commit
+  };
+  for (auto& tt : tests) {
+    auto storage = newTestMemoryStorage({withPeers({1, 2})});
+    storage->Append({NEW_ENT().Index(1).Term(1)(),
+                     NEW_ENT().Index(2).Term(2)(),
+                     NEW_ENT().Index(3).Term(3)()});
+    auto sm = newTestRaft(1, 5, 1, storage);
+    sm->Get()->BecomeFollower(2, 2);
+    sm->Get()->GetRaftLog()->CommitTo(commit);
+    sm->Get()->HandleHearbeat(tt.m);
+    ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), tt.wcommit);
+    auto m = sm->ReadMessages();
+    ASSERT_EQ(m.size(), 1);
+    ASSERT_EQ(m[0]->type(), raftpb::MessageType::MsgHeartbeatResp);
+  }
+}
+
+// TestHandleHeartbeatResp ensures that we re-send log entries when we get a heartbeat response.
+TEST(Raft, HandleHeartbeatResp) {
+  auto storage = newTestMemoryStorage({withPeers({1, 2})});
+  storage->Append({NEW_ENT().Index(1).Term(1)(),
+                    NEW_ENT().Index(2).Term(2)(),
+                    NEW_ENT().Index(3).Term(3)()});
+  auto sm = newTestRaft(1, 5, 1, storage);
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+  sm->Get()->GetRaftLog()->CommitTo(sm->Get()->GetRaftLog()->LastIndex());
+
+	// A heartbeat response from a node that is behind; re-send MsgApp
+  sm->Step({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeatResp)()});
+  auto msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgApp);
+
+  // A second heartbeat response generates another MsgApp re-send
+  sm->Step({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeatResp)()});
+  msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgApp);
+
+  // Once we have an MsgAppResp, heartbeats no longer send MsgApp.
+  sm->Step({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp)
+            .Index(msgs[0]->index() + msgs[0]->entries().size())()});
+  // Consume the message sent in response to MsgAppResp
+  sm->ReadMessages();
+
+  // A second heartbeat response generates another MsgApp re-send
+  sm->Step({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeatResp)()});
+  msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 0);
+}
+
+// // TestRaftFreesReadOnlyMem ensures raft will free read request from
+// // readOnly readIndexQueue and pendingReadIndex map.
+// // related issue: https://github.com/etcd-io/etcd/issues/7571
+// TEST(Raft, RaftFreesReadOnlyMem) {
+//   auto sm = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2})}));
+//   sm->Get()->BecomeCandidate();
+//   sm->Get()->BecomeLeader();
+//   sm->Get()->GetRaftLog()->CommitTo(sm->Get()->GetRaftLog()->LastIndex());
+
+//   std::string ctx = "ctx";
+
+// 	// leader starts linearizable read request.
+// 	// more info: raft dissertation 6.4, step 2.
+//   sm->Get()->Step()
+// }
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

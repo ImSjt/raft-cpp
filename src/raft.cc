@@ -1357,14 +1357,15 @@ Status Raft::StepFollower(MsgPtr m) {
   switch (m->type()) {
     case raftpb::MessageType::MsgProp: {
       if (lead_ == kNone) {
-        LOG_INFO("%d no leader at term %d; dropping proposal", id_, term_);
+        LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
         return Status::Error(kErrProposalDropped);
       } else if (disable_proposal_forwarding_) {
-        LOG_INFO("%s not forwarding to leader %d at term %d; dropping proposal",
+        LOG_INFO("%llu not forwarding to leader %llu at term %llu; dropping proposal",
                  id_, lead_, term_);
         return Status::Error(kErrProposalDropped);
       }
       m->set_to(lead_);
+      Send(m);
       break;
       ;
     }
@@ -1709,11 +1710,12 @@ bool Raft::PastElectionTimeout() const {
   return election_elapsed_ >= randomized_election_timeout_;
 }
 
+// TODO(juntaosu): 实现Util::random函数
 void Raft::ResetRandomizedElectionTimeout() {
   std::random_device seed;
   std::ranlux48 engine(seed());
   std::uniform_int_distribution<int64_t> distrib(static_cast<int64_t>(0),
-                                                 election_timeout_);
+                                                 election_timeout_-1);
   auto random = distrib(engine);
   randomized_election_timeout_ = election_timeout_ + random;
 }
