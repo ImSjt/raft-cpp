@@ -391,6 +391,7 @@ class Raft {
   uint64_t UncommittedSize() const { return uncommitted_size_; }
 
   RaftStateType State() const { return state_; }
+  void SetState(RaftStateType state) { state_ = state; }
 
   int64_t ElectionTimeout() const { return election_timeout_; }
   void SetRandomizedElectionTimeout(int64_t v) {
@@ -400,7 +401,9 @@ class Raft {
   bool IsLearner() const { return is_learner_; }
 
   uint64_t Vote() const { return vote_; }
+  void SetVote(uint64_t vote) { vote_ = vote; }
 
+  int64_t ElectionElapsed() const { return election_elapsed_; }
   void SetElectionElapsed(int64_t election_elapsed) {
     election_elapsed_ = election_elapsed;
   }
@@ -408,6 +411,16 @@ class Raft {
   void SetStep(StepFunc&& step) {
     step_ = std::move(step);
   }
+
+  ReadOnly* GetReadOnly() { return read_only_.get(); }
+
+  uint64_t Lead() const { return lead_; }
+
+  int64_t RandomizedElectionTimeout() const {
+    return randomized_election_timeout_;
+  }
+
+  void SetCheckQuorum(bool v) { check_quorum_ = v; }
 
  private:
   uint64_t id_;

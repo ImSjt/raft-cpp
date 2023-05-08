@@ -762,10 +762,10 @@ Status Raft::Step(MsgPtr m) {
       // with "pb.MsgAppResp" of higher term would force leader to step down.
       // However, this disruption is inevitable to free this stuck node with
       // fresh election. This can be prevented with Pre-Vote phase.
-      auto m = std::make_shared<raftpb::Message>();
-      m->set_to(m->from());
-      m->set_type(raftpb::MessageType::MsgAppResp);
-      Send(m);
+      auto msg = std::make_shared<raftpb::Message>();
+      msg->set_to(m->from());
+      msg->set_type(raftpb::MessageType::MsgAppResp);
+      Send(msg);
     } else if (m->type() == raftpb::MessageType::MsgPreVote) {
       // Before Pre-Vote enable, there may have candidate with higher term,
       // but less log. After update to Pre-Vote, the cluster may deadlock if
@@ -776,12 +776,12 @@ Status Raft::Step(MsgPtr m) {
           id_, raft_log_->LastTerm(), raft_log_->LastIndex(), vote_,
           raftpb::MessageType_Name(m->type()).c_str(), m->type(), m->from(),
           m->logterm(), m->index(), m->term());
-      auto m = std::make_shared<raftpb::Message>();
-      m->set_to(m->from());
-      m->set_term(term_);
-      m->set_type(raftpb::MessageType::MsgPreVoteResp);
-      m->set_reject(true);
-      Send(m);
+      auto msg = std::make_shared<raftpb::Message>();
+      msg->set_to(m->from());
+      msg->set_term(term_);
+      msg->set_type(raftpb::MessageType::MsgPreVoteResp);
+      msg->set_reject(true);
+      Send(msg);
     } else {
       // ignore other cases
       LOG_INFO(
@@ -846,6 +846,7 @@ Status Raft::Step(MsgPtr m) {
       auto msg = std::make_shared<raftpb::Message>();
       msg->set_to(m->from());
       msg->set_term(m->term());
+      std::cout << "term: " << m->term() << std::endl;
       msg->set_type(Util::VoteRespMsgType(m->type()));
       Send(msg);
       if (m->type() == raftpb::MessageType::MsgVote) {

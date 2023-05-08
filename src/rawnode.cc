@@ -218,7 +218,7 @@ void RawNode::ReportUnreachable(uint64_t id) {
 }
 
 void RawNode::ReportSnapshot(uint64_t id, SnapshotStatus status) {
-  bool rej = status = SnapshotStatus::kFailure;
+  bool rej = status == SnapshotStatus::kFailure;
   auto m = std::make_shared<raftpb::Message>();
   m->set_type(raftpb::MessageType::MsgSnapStatus);
   m->set_from(id);

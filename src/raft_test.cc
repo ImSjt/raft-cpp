@@ -914,8 +914,8 @@ static void testVoteFromAnyState(raftpb::MessageType vt) {
       // In a prevote, nothing changes.
       ASSERT_EQ(r->Get()->State(), st);
       ASSERT_EQ(r->Get()->Term(), orig_term);
-			// if st == StateFollower or StatePreCandidate, r hasn't voted yet.
-			// In StateCandidate or StateLeader, it's voted for itself.
+			// if st == craft::RaftStateType::kFollower or craft::RaftStateType::kPreCandidate, r hasn't voted yet.
+			// In craft::RaftStateType::kCandidate or craft::RaftStateType::kLeader, it's voted for itself.
       ASSERT_FALSE(r->Get()->Vote() != craft::Raft::kNone &&
                    r->Get()->Vote() != 1) << raftpb::MessageType_Name(vt) << "," <<
                    craft::RaftStateTypeName(static_cast<craft::RaftStateType>(st)) << ": vote " << r->Get()->Vote() <<
@@ -1587,21 +1587,554 @@ TEST(Raft, HandleHeartbeatResp) {
   ASSERT_EQ(msgs.size(), 0);
 }
 
-// // TestRaftFreesReadOnlyMem ensures raft will free read request from
-// // readOnly readIndexQueue and pendingReadIndex map.
-// // related issue: https://github.com/etcd-io/etcd/issues/7571
-// TEST(Raft, RaftFreesReadOnlyMem) {
-//   auto sm = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2})}));
-//   sm->Get()->BecomeCandidate();
-//   sm->Get()->BecomeLeader();
-//   sm->Get()->GetRaftLog()->CommitTo(sm->Get()->GetRaftLog()->LastIndex());
+// TestRaftFreesReadOnlyMem ensures raft will free read request from
+// readOnly readIndexQueue and pendingReadIndex map.
+// related issue: https://github.com/etcd-io/etcd/issues/7571
+TEST(Raft, RaftFreesReadOnlyMem) {
+  auto sm = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+  sm->Get()->GetRaftLog()->CommitTo(sm->Get()->GetRaftLog()->LastIndex());
 
-//   std::string ctx = "ctx";
+  std::string ctx = "ctx";
 
-// 	// leader starts linearizable read request.
-// 	// more info: raft dissertation 6.4, step 2.
-//   sm->Get()->Step()
-// }
+	// leader starts linearizable read request.
+	// more info: raft dissertation 6.4, step 2.
+  sm->Step(NEW_MSG().From(2).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(ctx)()})());
+  auto msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgHeartbeat);
+  ASSERT_EQ(msgs[0]->context(), ctx);
+  ASSERT_EQ(sm->Get()->GetReadOnly()->GetReadIndexQueue().size(), 1);
+  ASSERT_EQ(sm->Get()->GetReadOnly()->GetPendingReadIndex().size(), 1);
+  ASSERT_TRUE(sm->Get()->GetReadOnly()->GetPendingReadIndex().count(ctx) > 0);
+
+	// heartbeat responses from majority of followers (1 in this case)
+	// acknowledge the authority of the leader.
+	// more info: raft dissertation 6.4, step 3.
+  sm->Step({NEW_MSG().From(2).Type(raftpb::MessageType::MsgHeartbeatResp).Context(ctx)()});
+  ASSERT_EQ(sm->Get()->GetReadOnly()->GetReadIndexQueue().size(), 0);
+  ASSERT_EQ(sm->Get()->GetReadOnly()->GetPendingReadIndex().size(), 0);
+  ASSERT_TRUE(sm->Get()->GetReadOnly()->GetPendingReadIndex().count(ctx) == 0);
+}
+
+// TestMsgAppRespWaitReset verifies the resume behavior of a leader
+// MsgAppResp.
+TEST(Raft, MsgAppRespWaitReset) {
+  auto sm = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+
+	// The new leader has just emitted a new Term 4 entry; consume those messages
+	// from the outgoing queue.
+  sm->Get()->BcastAppend();
+  sm->ReadMessages();
+
+	// Node 2 acks the first entry, making it committed.
+  sm->Step(NEW_MSG().From(2).Type(raftpb::MessageType::MsgAppResp).Index(1)());
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 1);
+	// Also consume the MsgApp messages that update Commit on the followers.
+  sm->ReadMessages();
+
+	// A new command is now proposed on node 1.
+  sm->Step(NEW_MSG().From(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})());
+	// The command is broadcast to all nodes not in the wait state.
+	// Node 2 left the wait state due to its MsgAppResp, but node 3 is still waiting.
+  auto msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgApp);
+  ASSERT_EQ(msgs[0]->to(), 2);
+  ASSERT_EQ(msgs[0]->entries().size(), 1);
+  ASSERT_EQ(msgs[0]->entries(0).index(), 2);
+
+	// Now Node 3 acks the first entry. This releases the wait and entry 2 is sent.
+  sm->Step(NEW_MSG().From(3).Type(raftpb::MessageType::MsgAppResp).Index(1)());
+  msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgApp);
+  ASSERT_EQ(msgs[0]->to(), 3);
+  ASSERT_EQ(msgs[0]->entries().size(), 1);
+  ASSERT_EQ(msgs[0]->entries(0).index(), 2);
+}
+
+static void testRecvMsgVote(raftpb::MessageType msg_type) {
+  struct Test {
+    craft::RaftStateType state;
+    uint64_t index;
+    uint64_t log_term;
+    uint64_t vote_for;
+    bool wreject;
+  };
+  std::vector<Test> tests = {
+    {craft::RaftStateType::kFollower, 0, 0, craft::Raft::kNone, true},
+    {craft::RaftStateType::kFollower, 0, 1, craft::Raft::kNone, true},
+    {craft::RaftStateType::kFollower, 0, 2, craft::Raft::kNone, true},
+    {craft::RaftStateType::kFollower, 0, 3, craft::Raft::kNone, false},
+
+		{craft::RaftStateType::kFollower, 1, 0, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 1, 1, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 1, 2, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 1, 3, craft::Raft::kNone, false},
+
+		{craft::RaftStateType::kFollower, 2, 0, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 2, 1, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 2, 2, craft::Raft::kNone, false},
+		{craft::RaftStateType::kFollower, 2, 3, craft::Raft::kNone, false},
+
+		{craft::RaftStateType::kFollower, 3, 0, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 3, 1, craft::Raft::kNone, true},
+		{craft::RaftStateType::kFollower, 3, 2, craft::Raft::kNone, false},
+		{craft::RaftStateType::kFollower, 3, 3, craft::Raft::kNone, false},
+
+		{craft::RaftStateType::kFollower, 3, 2, 2, false},
+		{craft::RaftStateType::kFollower, 3, 2, 1, true},
+
+		{craft::RaftStateType::kLeader, 3, 3, 1, true},
+		{craft::RaftStateType::kPreCandidate, 3, 3, 1, true},
+		{craft::RaftStateType::kCandidate, 3, 3, 1, true},
+  };
+  for (auto& tt : tests) {
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+    sm->Get()->SetState(tt.state);
+    if (tt.state == craft::RaftStateType::kFollower) {
+      sm->Get()->SetStep(std::bind(&craft::Raft::StepFollower, sm->Get(), std::placeholders::_1));
+    } else if (tt.state == craft::RaftStateType::kCandidate || tt.state == craft::RaftStateType::kPreCandidate) {
+      sm->Get()->SetStep(std::bind(&craft::Raft::StepCandidate, sm->Get(), std::placeholders::_1));
+    } else if (tt.state == craft::RaftStateType::kLeader) {
+      sm->Get()->SetStep(std::bind(&craft::Raft::StepLeader, sm->Get(), std::placeholders::_1));
+    }
+    sm->Get()->SetVote(tt.vote_for);
+    auto storage = std::make_shared<craft::MemoryStorage>();
+    storage->SetEntries({NEW_ENT()(),
+                         NEW_ENT().Index(1).Term(2)(),
+                         NEW_ENT().Index(2).Term(2)()});
+    auto want_log = std::make_shared<craft::RaftLog>(storage);
+    want_log->GetUnstable().SetOffset(3);
+    *(sm->Get()->GetRaftLog()) = *want_log;
+
+		// raft.Term is greater than or equal to raft.raftLog.lastTerm. In this
+		// test we're only testing MsgVote responses when the campaigning node
+		// has a different raft log compared to the recipient node.
+		// Additionally we're verifying behaviour when the recipient node has
+		// already given out its vote for its current term. We're not testing
+		// what the recipient node does when receiving a message with a
+		// different term number, so we simply initialize both term numbers to
+		// be the same.
+    auto term = std::max(sm->Get()->GetRaftLog()->LastTerm(), tt.log_term);
+    sm->Get()->SetTerm(term);
+    sm->Step(NEW_MSG().Type(msg_type).Term(term).From(2).Index(tt.index).LogTerm(tt.log_term)());
+
+    auto msgs = sm->ReadMessages();
+    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs[0]->type(), craft::Util::VoteRespMsgType(msg_type));
+    ASSERT_EQ(msgs[0]->reject(), tt.wreject);
+  }
+}
+
+TEST(Raft, RecvMsgVote) {
+  testRecvMsgVote(raftpb::MessageType::MsgVote);
+}
+
+TEST(Raft, RecvMsgPreVote) {
+  testRecvMsgVote(raftpb::MessageType::MsgPreVote);
+}
+
+TEST(Raft, StateTransition) {
+  struct Test {
+    craft::RaftStateType from;
+    craft::RaftStateType to;
+    bool wallow;
+    uint64_t wterm;
+    uint64_t wlead;
+  };
+  std::vector<Test> tests = {
+		{craft::RaftStateType::kFollower, craft::RaftStateType::kFollower, true, 1, craft::Raft::kNone},
+		{craft::RaftStateType::kFollower, craft::RaftStateType::kPreCandidate, true, 0, craft::Raft::kNone},
+		{craft::RaftStateType::kFollower, craft::RaftStateType::kCandidate, true, 1, craft::Raft::kNone},
+		// {craft::RaftStateType::kFollower, craft::RaftStateType::kLeader, false, 0, craft::Raft::kNone},
+
+		{craft::RaftStateType::kPreCandidate, craft::RaftStateType::kFollower, true, 0, craft::Raft::kNone},
+		{craft::RaftStateType::kPreCandidate, craft::RaftStateType::kPreCandidate, true, 0, craft::Raft::kNone},
+		{craft::RaftStateType::kPreCandidate, craft::RaftStateType::kCandidate, true, 1, craft::Raft::kNone},
+		{craft::RaftStateType::kPreCandidate, craft::RaftStateType::kLeader, true, 0, 1},
+
+		{craft::RaftStateType::kCandidate, craft::RaftStateType::kFollower, true, 0, craft::Raft::kNone},
+		{craft::RaftStateType::kCandidate, craft::RaftStateType::kPreCandidate, true, 0, craft::Raft::kNone},
+		{craft::RaftStateType::kCandidate, craft::RaftStateType::kCandidate, true, 1, craft::Raft::kNone},
+		{craft::RaftStateType::kCandidate, craft::RaftStateType::kLeader, true, 0, 1},
+
+		{craft::RaftStateType::kLeader, craft::RaftStateType::kFollower, true, 1, craft::Raft::kNone},
+		// {craft::RaftStateType::kLeader, craft::RaftStateType::kPreCandidate, false, 0, craft::Raft::kNone},
+		// {craft::RaftStateType::kLeader, craft::RaftStateType::kCandidate, false, 1, craft::Raft::kNone},
+		{craft::RaftStateType::kLeader, craft::RaftStateType::kLeader, true, 0, 1},
+  };
+  for (auto& tt : tests) {
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+    sm->Get()->SetState(tt.from);
+
+    if (tt.to == craft::RaftStateType::kFollower) {
+      sm->Get()->BecomeFollower(tt.wterm, tt.wlead);
+    } else if (tt.to == craft::RaftStateType::kPreCandidate) {
+      sm->Get()->BecomePreCandidate();
+    } else if (tt.to == craft::RaftStateType::kCandidate) {
+      sm->Get()->BecomeCandidate();
+    } else if (tt.to == craft::RaftStateType::kLeader) {
+      sm->Get()->BecomeLeader();
+    }
+
+    ASSERT_EQ(sm->Get()->Term(), tt.wterm);
+    ASSERT_EQ(sm->Get()->Lead(), tt.wlead);
+  }
+}
+
+TEST(Raft, AllServerStepdown) {
+  struct Test {
+    craft::RaftStateType state;
+    craft::RaftStateType wstate;
+    uint64_t wterm;
+    uint64_t windex;
+  };
+  std::vector<Test> tests = {
+		{craft::RaftStateType::kFollower, craft::RaftStateType::kFollower, 3, 0},
+		{craft::RaftStateType::kPreCandidate, craft::RaftStateType::kFollower, 3, 0},
+		{craft::RaftStateType::kCandidate, craft::RaftStateType::kFollower, 3, 0},
+		{craft::RaftStateType::kLeader, craft::RaftStateType::kFollower, 3, 1},
+  };
+
+  std::vector<raftpb::MessageType> tmsg_types = {raftpb::MessageType::MsgVote, raftpb::MessageType::MsgApp};
+  uint64_t tterm = 3;
+  for (auto& tt : tests) {
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+    if (tt.state == craft::RaftStateType::kFollower) {
+      sm->Get()->BecomeFollower(1, craft::Raft::kNone);
+    } else if (tt.state == craft::RaftStateType::kPreCandidate) {
+      sm->Get()->BecomePreCandidate();
+    } else if (tt.state == craft::RaftStateType::kCandidate) {
+      sm->Get()->BecomeCandidate();
+    } else if (tt.state == craft::RaftStateType::kLeader) {
+      sm->Get()->BecomeCandidate();
+      sm->Get()->BecomeLeader();
+    }
+
+    for (auto msg_type : tmsg_types) {
+      sm->Step(NEW_MSG().From(2).Type(msg_type).Term(tterm).LogTerm(tterm)());
+      ASSERT_EQ(sm->Get()->State(), tt.wstate);
+      ASSERT_EQ(sm->Get()->Term(), tt.wterm);
+      ASSERT_EQ(sm->Get()->GetRaftLog()->LastIndex(), tt.windex);
+      ASSERT_EQ(sm->Get()->GetRaftLog()->AllEntries().size(), tt.windex);
+      uint64_t wlead = 2;
+      if (msg_type == raftpb::MessageType::MsgVote) {
+        wlead = craft::Raft::kNone;
+      }
+      ASSERT_EQ(sm->Get()->Lead(), wlead);
+    }
+  }
+}
+
+// testCandidateResetTerm tests when a candidate receives a
+// MsgHeartbeat or MsgApp from leader, "Step" resets the term
+// with leader's and reverts back to follower.
+void testCandidateResetTerm(raftpb::MessageType mt) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  auto nt = NetWork::New({a, b, c});
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(b->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kFollower);
+
+  // isolate 3 and increase term in rest
+  nt->Isolate(3);
+
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(b->Get()->State(), craft::RaftStateType::kFollower);
+
+	// trigger campaign in isolated c
+  c->Get()->ResetRandomizedElectionTimeout();
+  for (int64_t i = 0; i < c->Get()->RandomizedElectionTimeout(); i++) {
+    c->Get()->Tick();
+  }
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kCandidate);
+
+  nt->Recover();
+
+	// leader sends to isolated candidate
+	// and expects candidate to revert to follower
+  nt->Send({NEW_MSG().From(1).To(3).Term(a->Get()->Term()).Type(mt)()});
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kFollower);
+
+  // follower c term is reset with leader's
+  ASSERT_EQ(a->Get()->Term(), c->Get()->Term());
+}
+
+TEST(Raft, CandidateResetTermMsgHeartbeat) {
+  testCandidateResetTerm(raftpb::MessageType::MsgHeartbeat);
+}
+
+TEST(Raft, CandidateResetTermMsgApp) {
+  testCandidateResetTerm(raftpb::MessageType::MsgApp);
+}
+
+TEST(Raft, LeaderStepdownWhenQuorumActive) {
+  auto sm = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  sm->Get()->SetCheckQuorum(true);
+
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+
+  for (int64_t i = 0; i < sm->Get()->ElectionTimeout() + 1; i++) {
+    sm->Step(NEW_MSG().From(2).Type(raftpb::MessageType::MsgHeartbeatResp).Term(sm->Get()->Term())());
+    sm->Get()->Tick();
+  }
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+}
+
+TEST(Raft, LeaderStepdownWhenQuorumLost) {
+  auto sm = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  sm->Get()->SetCheckQuorum(true);
+
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+
+  for (int64_t i = 0; i < sm->Get()->ElectionTimeout() + 1; i++) {
+    sm->Get()->Tick();
+  }
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+TEST(Raft, LeaderSupersedingWithCheckQuorum) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  a->Get()->SetCheckQuorum(true);
+  b->Get()->SetCheckQuorum(true);
+  c->Get()->SetCheckQuorum(true);
+
+  auto nt = NetWork::New({a, b, c});
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(b->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kFollower);
+
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+
+	// Peer b rejected c's vote since its electionElapsed had not reached to electionTimeout
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kCandidate);
+
+	// Letting b's electionElapsed reach to electionTimeout
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kLeader);
+}
+
+TEST(Raft, LeaderElectionWithCheckQuorum) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  a->Get()->SetCheckQuorum(true);
+  b->Get()->SetCheckQuorum(true);
+  c->Get()->SetCheckQuorum(true);
+
+  auto nt = NetWork::New({a, b, c});
+  a->Get()->SetRandomizedElectionTimeout(a->Get()->ElectionTimeout()+1);
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout()+2);
+
+	// Immediately after creation, votes are cast regardless of the
+	// election timeout.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kFollower);
+
+	// need to reset randomizedElectionTimeout larger than electionTimeout again,
+	// because the value might be reset to electionTimeout since the last state changes
+  a->Get()->SetRandomizedElectionTimeout(a->Get()->ElectionTimeout()+1);
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout()+2);
+  for (int64_t i = 0; i < a->Get()->ElectionTimeout(); i++) {
+    a->Get()->Tick();
+  }
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kLeader);
+}
+
+// TestFreeStuckCandidateWithCheckQuorum ensures that a candidate with a higher term
+// can disrupt the leader even if the leader still "officially" holds the lease, The
+// leader is expected to step down and adopt the candidate's term
+TEST(Raft, FreeStuckCandidateWithCheckQuorum) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  a->Get()->SetCheckQuorum(true);
+  b->Get()->SetCheckQuorum(true);
+  c->Get()->SetCheckQuorum(true);
+
+  auto nt = NetWork::New({a, b, c});
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
+
+  for (size_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(1);
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+
+  ASSERT_EQ(b->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kCandidate);
+  ASSERT_EQ(c->Get()->Term(), b->Get()->Term() + 1);
+
+  // Vote again for safety
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kCandidate);
+  ASSERT_EQ(c->Get()->Term(), b->Get()->Term() + 2);
+
+  nt->Recover();
+  nt->Send({NEW_MSG().From(1).To(3).Type(raftpb::MessageType::MsgHeartbeat).Term(a->Get()->Term())()});
+
+  // Disrupt the leader so that the stuck peer is freed
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kFollower);
+
+  ASSERT_EQ(c->Get()->Term(), a->Get()->Term());
+
+  // Vote again, should become leader this time
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(c->Get()->State(), craft::RaftStateType::kLeader);
+}
+
+TEST(Raft, NonPromotableVoterWithCheckQuorum) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1})}));
+
+  a->Get()->SetCheckQuorum(true);
+  b->Get()->SetCheckQuorum(true);
+
+  auto nt = NetWork::New({a, b});
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
+	// Need to remove 2 again to make it a non-promotable node since newNetwork overwritten some internal states
+  b->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeRemoveNode));
+  ASSERT_FALSE(b->Get()->Promotable());
+
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(b->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(b->Get()->Lead(), 1);
+}
+
+// TestDisruptiveFollower tests isolated follower,
+// with slow network incoming from leader, election times out
+// to become a candidate with an increased term. Then, the
+// candiate's response to late leader heartbeat forces the leader
+// to step down.
+TEST(Raft, DisruptiveFollower) {
+  auto n1 = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n3 = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  n1->Get()->SetCheckQuorum(true);
+  n2->Get()->SetCheckQuorum(true);
+  n3->Get()->SetCheckQuorum(true);
+
+  n1->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n2->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n3->Get()->BecomeFollower(1, craft::Raft::kNone);
+
+  auto nt = NetWork::New({n1, n2, n3});
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+	// check state
+	// n1.state == StateLeader
+	// n2.state == StateFollower
+	// n3.state == StateFollower
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->State(), craft::RaftStateType::kFollower);  
+
+	// etcd server "advanceTicksForElection" on restart;
+	// this is to expedite campaign trigger when given larger
+	// election timeouts (e.g. multi-datacenter deploy)
+	// Or leader messages are being delayed while ticks elapse
+  n3->Get()->SetRandomizedElectionTimeout(n3->Get()->ElectionTimeout() + 2);
+  for (int64_t i = 0; i < n3->Get()->RandomizedElectionTimeout()-1; i++) {
+    n3->Get()->Tick();
+  }
+
+	// ideally, before last election tick elapses,
+	// the follower n3 receives "pb.MsgApp" or "pb.MsgHeartbeat"
+	// from leader n1, and then resets its "electionElapsed"
+	// however, last tick may elapse before receiving any
+	// messages from leader, thus triggering campaign
+  n3->Get()->Tick();
+
+	// n1 is still leader yet
+	// while its heartbeat to candidate n3 is being delayed
+
+	// check state
+	// n1.state == StateLeader
+	// n2.state == StateFollower
+	// n3.state == StateCandidate
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->State(), craft::RaftStateType::kCandidate);
+	// check term
+	// n1.Term == 2
+	// n2.Term == 2
+	// n3.Term == 3
+  ASSERT_EQ(n1->Get()->Term(), 2);
+  ASSERT_EQ(n2->Get()->Term(), 2);
+  ASSERT_EQ(n3->Get()->Term(), 3);
+
+	// while outgoing vote requests are still queued in n3,
+	// leader heartbeat finally arrives at candidate n3
+	// however, due to delayed network from leader, leader
+	// heartbeat was sent with lower term than candidate's
+  nt->Send({NEW_MSG().From(1).To(3).Term(n1->Get()->Term()).Type(raftpb::MessageType::MsgHeartbeat)()});
+
+	// then candidate n3 responds with "pb.MsgAppResp" of higher term
+	// and leader steps down from a message with higher term
+	// this is to disrupt the current leader, so that candidate
+	// with higher term can be freed with following election
+
+	// check state
+	// n1.state == StateFollower
+	// n2.state == StateFollower
+	// n3.state == StateCandidate
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->State(), craft::RaftStateType::kCandidate);
+	// check term
+	// n1.Term == 3
+	// n2.Term == 2
+	// n3.Term == 3
+  ASSERT_EQ(n1->Get()->Term(), 3);
+  ASSERT_EQ(n2->Get()->Term(), 2);
+  ASSERT_EQ(n3->Get()->Term(), 3);
+}
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

@@ -85,6 +85,9 @@ class ReadOnly {
 
   ReadOnlyOption Option() const { return option_; }
 
+  auto& GetPendingReadIndex() { return pending_read_index_; }
+  auto& GetReadIndexQueue() { return read_index_queue_; }
+
  private:
   ReadOnlyOption option_;
   std::map<std::string, std::shared_ptr<ReadIndexStatus>> pending_read_index_;

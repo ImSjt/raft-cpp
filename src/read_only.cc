@@ -24,7 +24,7 @@ void ReadOnly::AddRequest(uint64_t index, MsgPtr m) {
   if (pending_read_index_.count(s) != 0) {
     return;
   }
-  auto read_index_status = std::shared_ptr<ReadIndexStatus>();
+  auto read_index_status = std::make_shared<ReadIndexStatus>();
   read_index_status->req = m;
   read_index_status->index = index;
   pending_read_index_.emplace(std::make_pair(s, read_index_status));
