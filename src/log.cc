@@ -33,7 +33,6 @@ RaftLog::RaftLog(std::shared_ptr<Storage> storage, uint64_t max_next_ents_size)
       applied_(0),
       max_next_ents_size_(max_next_ents_size) {
   assert(storage_ != nullptr);
-  storage->FirstIndex();
 
   auto [first_index, s1] = storage->FirstIndex();
   assert(s1.IsOK());

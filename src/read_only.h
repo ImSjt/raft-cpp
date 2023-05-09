@@ -81,9 +81,8 @@ class ReadOnly {
   // request in readonly struct.
   const std::string& LastPendingRequestCtx() const;
 
-  const ReadOnlyOption& GetReadOnlyOption() const { return option_; }
-
   ReadOnlyOption Option() const { return option_; }
+  void SetOption(ReadOnlyOption option) { option_ = option; }
 
   auto& GetPendingReadIndex() { return pending_read_index_; }
   auto& GetReadIndexQueue() { return read_index_queue_; }

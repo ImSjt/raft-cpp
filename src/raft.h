@@ -393,6 +393,9 @@ class Raft {
   RaftStateType State() const { return state_; }
   void SetState(RaftStateType state) { state_ = state; }
 
+  int64_t HeartbeatTimeout() const { return heartbeat_timeout_; }
+  void SetHeartbeatTimeout(int64_t heartbeat_timeout) { heartbeat_timeout_ = heartbeat_timeout; }
+
   int64_t ElectionTimeout() const { return election_timeout_; }
   void SetRandomizedElectionTimeout(int64_t v) {
     randomized_election_timeout_ = v;

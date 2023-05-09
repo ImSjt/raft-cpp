@@ -89,7 +89,7 @@ class Message {
   }
 
   Message& RejectHint(uint64_t reject_hint) {
-    m->set_reject(reject_hint);
+    m->set_rejecthint(reject_hint);
     return *this;
   }
 
@@ -2134,6 +2134,380 @@ TEST(Raft, DisruptiveFollower) {
   ASSERT_EQ(n1->Get()->Term(), 3);
   ASSERT_EQ(n2->Get()->Term(), 2);
   ASSERT_EQ(n3->Get()->Term(), 3);
+}
+
+TEST(Raft, ReadOnlyOptionSafe) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  auto nt = NetWork::New({a, b, c});
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+
+  struct Test {
+    std::shared_ptr<Raft> sm;
+    int proposals;
+    uint64_t wri;
+    std::string wctx;
+  };
+  std::vector<Test> tests = {
+    {a, 10, 11, "ctx1"},
+    {b, 10, 21, "ctx2"},
+    {c, 10, 31, "ctx3"},
+    {a, 10, 41, "ctx4"},
+    {b, 10, 51, "ctx5"},
+    {c, 10, 61, "ctx6"},
+  };
+
+  for (auto& tt : tests) {
+    for (int j = 0; j < tt.proposals; j++) {
+      nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+    }
+
+    nt->Send({NEW_MSG().From(tt.sm->Get()->ID()).To(tt.sm->Get()->ID()).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(tt.wctx)()})()});
+
+    auto r = tt.sm;
+    ASSERT_NE(r->Get()->GetReadStates().size(), 0);
+    auto& rs = r->Get()->GetReadStates()[0];
+    ASSERT_EQ(rs.index, tt.wri);
+    ASSERT_EQ(rs.request_ctx, tt.wctx);
+    r->Get()->ClearReadStates();
+  }
+}
+
+TEST(Raft, ReadOnlyWithLearner) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1}), withLearners({2})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1}), withLearners({2})}));
+
+  auto nt = NetWork::New({a, b});
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
+
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+
+  struct Test {
+    std::shared_ptr<Raft> sm;
+    int proposals;
+    uint64_t wri;
+    std::string wctx;
+  };
+  std::vector<Test> tests = {
+    {a, 10, 11, "ctx1"},
+    {b, 10, 21, "ctx2"},
+    {a, 10, 31, "ctx3"},
+    {b, 10, 41, "ctx4"},
+  };
+
+  for (auto& tt : tests) {
+    for (int j = 0; j < tt.proposals; j++) {
+      nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+    }
+
+    nt->Send({NEW_MSG().From(tt.sm->Get()->ID()).To(tt.sm->Get()->ID()).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(tt.wctx)()})()});
+
+    auto r = tt.sm;
+    ASSERT_NE(r->Get()->GetReadStates().size(), 0);
+    auto& rs = r->Get()->GetReadStates()[0];
+    ASSERT_EQ(rs.index, tt.wri);
+    ASSERT_EQ(rs.request_ctx, tt.wctx);
+    r->Get()->ClearReadStates();
+  }
+}
+
+TEST(Raft, ReadOnlyOptionLease) {
+  auto a = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto b = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto c = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  a->Get()->GetReadOnly()->SetOption(craft::ReadOnly::kLeaseBased);
+  b->Get()->GetReadOnly()->SetOption(craft::ReadOnly::kLeaseBased);
+  c->Get()->GetReadOnly()->SetOption(craft::ReadOnly::kLeaseBased);
+  a->Get()->SetCheckQuorum(true);
+  b->Get()->SetCheckQuorum(true);
+  c->Get()->SetCheckQuorum(true);
+
+  auto nt = NetWork::New({a, b, c});
+  b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+    b->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kLeader);
+
+  struct Test {
+    std::shared_ptr<Raft> sm;
+    int proposals;
+    uint64_t wri;
+    std::string wctx;
+  };
+  std::vector<Test> tests = {
+		{a, 10, 11, "ctx1"},
+		{b, 10, 21, "ctx2"},
+		{c, 10, 31, "ctx3"},
+		{a, 10, 41, "ctx4"},
+		{b, 10, 51, "ctx5"},
+		{c, 10, 61, "ctx6"},
+  };
+  for (auto& tt : tests) {
+    for (int j = 0; j < tt.proposals; j++) {
+      nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+    }
+
+    nt->Send({NEW_MSG().From(tt.sm->Get()->ID()).To(tt.sm->Get()->ID()).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(tt.wctx)()})()});
+
+    auto r = tt.sm;
+    ASSERT_NE(r->Get()->GetReadStates().size(), 0);
+    auto& rs = r->Get()->GetReadStates()[0];
+    ASSERT_EQ(rs.index, tt.wri);
+    ASSERT_EQ(rs.request_ctx, tt.wctx);
+    r->Get()->ClearReadStates();
+  }
+}
+
+// TestReadOnlyForNewLeader ensures that a leader only accepts MsgReadIndex message
+// when it commits at least one log entry at it term.
+TEST(Raft, ReadOnlyForNewLeader) {
+  struct NodeConfig {
+    uint64_t id;
+    uint64_t committed;
+    uint64_t applied;
+    uint64_t compact_index;
+  };
+  std::vector<NodeConfig> node_configs = {
+    {1, 1, 1, 0},
+    {2, 2, 2, 2},
+    {3, 2, 2, 2},
+  };
+  std::vector<std::shared_ptr<StateMachince>> peers;
+  for (auto& c : node_configs) {
+    auto storage = newTestMemoryStorage({withPeers({1, 2, 3})});
+    storage->Append({NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1)()});
+    raftpb::HardState hs;
+    hs.set_term(1);
+    hs.set_commit(c.committed);
+    storage->SetHardState(hs);
+    if (c.compact_index != 0) {
+      storage->Compact(c.compact_index);
+    }
+    auto cfg = newTestConfig(c.id, 10, 1, storage);
+    cfg.applied = c.applied;
+    peers.emplace_back(newTestRaftWithConfig(cfg));
+  }
+  auto nt = NetWork::New(peers);
+
+	// Drop MsgApp to forbid peer a to commit any log entry at its term after it becomes leader.
+  nt->Ignore(raftpb::MessageType::MsgApp);
+  // Force peer a to become leader.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+  // Ensure peer a drops read only request.
+  uint64_t windex = 4;
+  std::string wctx = "ctx";
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(wctx)()})()});
+  ASSERT_EQ(sm->Get()->GetReadStates().size(), 0);
+
+  nt->Recover();
+
+	// Force peer a to commit a log entry at its term
+  for (int64_t i = 0; i < sm->Get()->HeartbeatTimeout(); i++) {
+    sm->Get()->Tick();
+  }
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), 4);
+  auto last_log_term = sm->Get()->GetRaftLog()->ZeroTermOnErrCompacted(sm->Get()->GetRaftLog()->Term(sm->Get()->GetRaftLog()->Committed()));
+  ASSERT_EQ(last_log_term, sm->Get()->Term());
+
+	// Ensure peer a processed postponed read only request after it committed an entry at its term.
+  ASSERT_EQ(sm->Get()->GetReadStates().size(), 1);
+  auto& rs = sm->Get()->GetReadStates()[0];
+  ASSERT_EQ(rs.index, windex);
+  ASSERT_EQ(rs.request_ctx, wctx);
+
+	// Ensure peer a accepts read only request after it committed an entry at its term.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(wctx)()})()});
+  ASSERT_EQ(sm->Get()->GetReadStates().size(), 2);
+  auto& rs2 = sm->Get()->GetReadStates()[1];
+  ASSERT_EQ(rs2.index, windex);
+  ASSERT_EQ(rs2.request_ctx, wctx);
+}
+
+TEST(Raft, LeaderAppResp) {
+	// initial progress: match = 0; next = 3
+  struct Test {
+    uint64_t index;
+    bool reject;
+    // progress
+    uint64_t wmatch;
+    uint64_t wnext;
+    // message
+    int wmsg_num;
+    uint64_t windex;
+    uint64_t wcommitted;
+  };
+  std::vector<Test> tests = {
+		{3, true, 0, 3, 0, 0, 0},  // stale resp; no replies
+		{2, true, 0, 2, 1, 1, 0},  // denied resp; leader does not commit; decrease next and send probing msg
+		{2, false, 2, 4, 2, 2, 2}, // accept resp; leader commits; broadcast with commit index
+		{0, false, 0, 3, 0, 0, 0}, // ignore heartbeat replies
+  };
+  for (auto& tt : tests) {
+		// sm term is 1 after it becomes the leader.
+		// thus the last log term must be 1 to be committed.
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+    auto storage = std::make_shared<craft::MemoryStorage>();
+    storage->SetEntries({NEW_ENT()(), NEW_ENT().Index(1).Term(0)(), NEW_ENT().Index(2).Term(1)()});
+    auto wlog = std::make_shared<craft::RaftLog>(storage);
+    wlog->GetUnstable().SetOffset(3);
+    *sm->Get()->GetRaftLog() = *wlog;
+
+    sm->Get()->BecomeCandidate();
+    sm->Get()->BecomeLeader();
+    sm->ReadMessages();
+
+    sm->Step(NEW_MSG()
+                 .From(2)
+                 .Type(raftpb::MessageType::MsgAppResp)
+                 .Index(tt.index)
+                 .Term(sm->Get()->Term())
+                 .Reject(tt.reject)
+                 .RejectHint(tt.index)());
+
+    auto p = sm->Get()->GetTracker().GetProgress(2);
+    ASSERT_EQ(p->Match(), tt.wmatch);
+    ASSERT_EQ(p->Next(), tt.wnext);
+
+    auto msgs = sm->ReadMessages();
+    ASSERT_EQ(msgs.size(), tt.wmsg_num);
+    for (auto msg : msgs) {
+      ASSERT_EQ(msg->index(), tt.windex);
+      ASSERT_EQ(msg->commit(), tt.wcommitted);
+    }
+  }
+}
+
+// When the leader receives a heartbeat tick, it should
+// send a MsgHeartbeat with m.Index = 0, m.LogTerm=0 and empty entries.
+TEST(Raft, BcastBeat) {
+  uint64_t offset = 1000;
+  // make a state machine with log.offset = 1000
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(offset);
+  s->mutable_metadata()->set_term(1);
+  s->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(1);
+  s->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(2);
+  s->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(3);
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->ApplySnapshot(s);
+  auto sm = newTestRaft(1, 10, 1, storage);
+  sm->Get()->SetTerm(1);
+
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+  for (int i = 0; i < 10; i++) {
+    ASSERT_TRUE(sm->Get()->AppendEntry({NEW_ENT().Index(i+1)()}));
+  }
+  // slow follower
+  sm->Get()->GetTracker().GetProgress(2)->SetMatch(5);
+  sm->Get()->GetTracker().GetProgress(2)->SetNext(6);
+  // normal follower
+  sm->Get()->GetTracker().GetProgress(3)->SetMatch(sm->Get()->GetRaftLog()->LastIndex());
+  sm->Get()->GetTracker().GetProgress(3)->SetNext(sm->Get()->GetRaftLog()->LastIndex() + 1);
+
+  sm->Step(NEW_MSG().Type(raftpb::MessageType::MsgBeat)());
+  auto msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 2);
+  std::map<uint64_t, uint64_t> want_commit_map = {
+    {2, std::min(sm->Get()->GetRaftLog()->Committed(), sm->Get()->GetTracker().GetProgress(2)->Match())},
+    {3, std::min(sm->Get()->GetRaftLog()->Committed(), sm->Get()->GetTracker().GetProgress(3)->Match())},
+  };
+
+  for (auto m : msgs) {
+    ASSERT_EQ(m->type(), raftpb::MessageType::MsgHeartbeat);
+    ASSERT_EQ(m->index(), 0);
+    ASSERT_EQ(m->logterm(), 0);
+    ASSERT_EQ(want_commit_map[m->to()], m->commit());
+    want_commit_map.erase(m->to());
+    ASSERT_EQ(m->entries().size(), 0);
+  }
+}
+
+// tests the output of the state machine when receiving MsgBeat
+TEST(Raft, RecvMsgBeat) {
+  struct Test {
+    craft::RaftStateType state;
+    int wmsg;
+  };
+  std::vector<Test> tests = {
+		{craft::RaftStateType::kLeader, 2},
+		// candidate and follower should ignore MsgBeat
+		{craft::RaftStateType::kCandidate, 0},
+		{craft::RaftStateType::kFollower, 0},
+  };
+  for (auto& tt : tests) {
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+    auto storage = std::make_shared<craft::MemoryStorage>();
+    storage->SetEntries({NEW_ENT()(), NEW_ENT().Index(1).Term(0)(), NEW_ENT().Index(2).Term(1)()});
+    auto wlog = std::make_shared<craft::RaftLog>(storage);
+    *sm->Get()->GetRaftLog() = *wlog;
+    sm->Get()->SetTerm(1);
+    sm->Get()->SetState(tt.state);
+    if (tt.state == craft::RaftStateType::kFollower) {
+      sm->Get()->SetStep(std::bind(&craft::Raft::StepFollower, sm->Get(), std::placeholders::_1));
+    } else if (tt.state == craft::RaftStateType::kCandidate) {
+      sm->Get()->SetStep(std::bind(&craft::Raft::StepCandidate, sm->Get(), std::placeholders::_1));
+    } else if (tt.state == craft::RaftStateType::kLeader) {
+      sm->Get()->SetStep(std::bind(&craft::Raft::StepLeader, sm->Get(), std::placeholders::_1));
+    }
+    sm->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)());
+
+    auto msgs = sm->ReadMessages();
+    ASSERT_EQ(msgs.size(), tt.wmsg);
+    for (auto m : msgs) {
+      ASSERT_EQ(m->type(), raftpb::MessageType::MsgHeartbeat);
+    }
+  }
+}
+
+TEST(Raft, LeaderIncreaseNext) {
+  craft::EntryPtrs previous_ents = {NEW_ENT().Term(1).Index(1)(), NEW_ENT().Term(1).Index(2)(), NEW_ENT().Term(1).Index(3)()};
+  struct Test {
+    // progress
+    craft::StateType state;
+    uint64_t next;
+
+    uint64_t wnext;
+  };
+  std::vector<Test> tests = {
+		// state replicate, optimistically increase next
+		// previous entries + noop entry + propose + 1
+    {craft::StateType::kReplicate, 2, previous_ents.size() + 1 + 1 + 1},
+    // state probe, not optimistically increase next
+    {craft::StateType::kProbe, 2, 2},
+  };
+  for (auto& tt : tests) {
+    auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+    sm->Get()->GetRaftLog()->Append(previous_ents);
+    sm->Get()->BecomeCandidate();
+    sm->Get()->BecomeLeader();
+    sm->Get()->GetTracker().GetProgress(2)->SetState(tt.state);
+    sm->Get()->GetTracker().GetProgress(2)->SetNext(tt.next);
+    sm->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
+
+    auto p = sm->Get()->GetTracker().GetProgress(2);
+    ASSERT_EQ(p->Next(), tt.wnext);
+  }
 }
 
 int main(int argc, char** argv) {

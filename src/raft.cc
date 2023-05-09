@@ -150,10 +150,6 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
     LOG_FATAL("state is invalied, err:%s", s2.Str());
   }
 
-  if (c.applied > 0) {
-    raft_log->AppliedTo(c.applied);
-  }
-
   auto last_index = raft_log->LastIndex();
   auto r = std::make_unique<Raft>(c, std::move(raft_log));
 
@@ -168,6 +164,9 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
 
   if (!IsEmptyHardState(hs)) {
     r->LoadState(hs);
+  }
+  if (c.applied > 0) {
+    r->GetRaftLog()->AppliedTo(c.applied);
   }
 
   r->BecomeFollower(r->Term(), kNone);
@@ -435,7 +434,7 @@ void Raft::Reset(uint64_t term) {
 
   pending_conf_index_ = 0;
   uncommitted_size_ = 0;
-  read_only_ = std::make_unique<ReadOnly>(read_only_->GetReadOnlyOption());
+  read_only_ = std::make_unique<ReadOnly>(read_only_->Option());
 }
 
 bool Raft::AppendEntry(const EntryPtr& e) {
@@ -1197,7 +1196,7 @@ Status Raft::StepLeader(MsgPtr m) {
         SendAppend(m->from());
       }
 
-      if (read_only_->GetReadOnlyOption() != ReadOnly::ReadOnlyOption::kSafe ||
+      if (read_only_->Option() != ReadOnly::ReadOnlyOption::kSafe ||
           m->context().empty()) {
         return Status::OK();
       }
