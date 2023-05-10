@@ -1494,7 +1494,9 @@ void Raft::HandleHearbeat(MsgPtr m) {
 void Raft::HandleSnapshot(MsgPtr m) {
   auto sindex = m->snapshot().metadata().index();
   auto sterm = m->snapshot().metadata().term();
-  if (Restore(m->mutable_snapshot())) {
+  // TODO(juntaosu): move snapshot
+  auto s = std::make_shared<raftpb::Snapshot>(std::move(*m->mutable_snapshot()));
+  if (Restore(s)) {
     LOG_INFO("%llu [commit: %llu] restored snapshot [index: %llu, term: %llu]",
              id_, raft_log_->Committed(), sindex, sterm);
     auto resp = std::make_shared<raftpb::Message>();
@@ -1513,7 +1515,7 @@ void Raft::HandleSnapshot(MsgPtr m) {
   }
 }
 
-bool Raft::Restore(raftpb::Snapshot* s) {
+bool Raft::Restore(SnapshotPtr s) {
   if (s->metadata().index() <= raft_log_->Committed()) {
     return false;
   }
@@ -1582,8 +1584,7 @@ bool Raft::Restore(raftpb::Snapshot* s) {
     return false;
   }
 
-  // TODO(JT): 确保s的生命周期
-  raft_log_->Restore(std::shared_ptr<raftpb::Snapshot>(s));
+  raft_log_->Restore(s);
 
   // Reset the configuration and add the (potentially updated) peers in anew.
   trk_ = ProgressTracker(trk_.MaxInflight());

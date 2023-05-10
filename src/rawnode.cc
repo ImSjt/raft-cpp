@@ -50,19 +50,11 @@ static bool MustSync(const raftpb::HardState& st, const raftpb::HardState& prevs
 }
 
 bool operator==(const SoftState& s1, const SoftState& s2) {
-  return true;
-}
-
-bool operator!=(const SoftState& s1, const SoftState& s2) {
-  return true;
+  return s1.lead == s2.lead && s1.raft_state == s2.raft_state;
 }
 
 bool operator==(const raftpb::HardState& s1, const raftpb::HardState& s2) {
-  return true;
-}
-
-bool operator!=(const raftpb::HardState& s1, const raftpb::HardState& s2) {
-  return true;
+  return s1.term() == s2.term() && s1.vote() == s2.vote() && s1.commit() == s2.commit();
 }
 
 std::unique_ptr<RawNode> RawNode::New(Raft::Config& c) {
@@ -125,36 +117,37 @@ Ready RawNode::GetReady() {
 }
 
 Ready RawNode::ReadyWithoutAccept() {
-  Ready rd;
-  rd.entries = raft_->GetRaftLog()->UnstableEntries();
-  rd.committed_entries = raft_->GetRaftLog()->NextEnts();
-  rd.messages = raft_->Msgs();
+  // Ready rd;
+  // rd.entries = raft_->GetRaftLog()->UnstableEntries();
+  // rd.committed_entries = raft_->GetRaftLog()->NextEnts();
+  // rd.messages = raft_->Msgs();
 
-  auto soft_st = raft_->GetSoftState();
-  if (soft_st != *prev_soft_st_) {
-    rd.soft_state = soft_st;
-  }
+  // auto soft_st = raft_->GetSoftState();
+  // if (soft_st != *prev_soft_st_) {
+  //   rd.soft_state = soft_st;
+  // }
 
-  auto hard_st = raft_->GetHardState();
-  if (hard_st != *prev_hard_st_) {
-    rd.hard_state = hard_st;
-  }
+  // auto hard_st = raft_->GetHardState();
+  // if (hard_st != *prev_hard_st_) {
+  //   rd.hard_state = hard_st;
+  // }
 
-  if (raft_->GetRaftLog()->UnstableSnapshot()) {
-    rd.snapshot = raft_->GetRaftLog()->UnstableSnapshot();
-  }
+  // if (raft_->GetRaftLog()->UnstableSnapshot()) {
+  //   rd.snapshot = raft_->GetRaftLog()->UnstableSnapshot();
+  // }
 
-  if (!raft_->GetReadStates().empty()) {
-    rd.read_states = raft_->GetReadStates();
-  }
+  // if (!raft_->GetReadStates().empty()) {
+  //   rd.read_states = raft_->GetReadStates();
+  // }
 
-  rd.must_sync = MustSync(raft_->GetHardState(), *prev_hard_st_, rd.entries.size());
-  return rd;
+  // rd.must_sync = MustSync(raft_->GetHardState(), *prev_hard_st_, rd.entries.size());
+  // return rd;
+  return NewReady(raft_.get(), prev_soft_st_, prev_hard_st_);
 }
 
 void RawNode::AcceptReady(const Ready& rd) {
   if (rd.soft_state.has_value()) {
-    prev_soft_st_ = rd.soft_state;
+    prev_soft_st_ = *(rd.soft_state);
   }
   if (!rd.read_states.empty()) {
     raft_->ClearReadStates();
@@ -163,11 +156,11 @@ void RawNode::AcceptReady(const Ready& rd) {
 }
 
 bool RawNode::HasReady() const {
-  if (raft_->GetSoftState() != *prev_soft_st_) {
+  if (!(raft_->GetSoftState() == prev_soft_st_)) {
     return true;
   }
   auto hard_st = raft_->GetHardState();
-  if (!IsEmptyHardState(hard_st) && hard_st != *prev_hard_st_) {
+  if (!IsEmptyHardState(hard_st) && !(hard_st == prev_hard_st_)) {
     return true;
   }
   if (raft_->GetRaftLog()->HasPendingSnapshot()) {
@@ -239,6 +232,34 @@ void RawNode::ReadIndex(const std::string& rctx) {
   auto e = m->add_entries();
   e->set_data(rctx);
   raft_->Step(m);
+}
+
+Ready NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardState& prev_hard_st) {
+  Ready rd;
+  rd.entries = raft->GetRaftLog()->UnstableEntries();
+  rd.committed_entries = raft->GetRaftLog()->NextEnts();
+  rd.messages = raft->Msgs();
+
+  auto soft_st = raft->GetSoftState();
+  if (!(soft_st == prev_soft_st)) {
+    rd.soft_state = soft_st;
+  }
+
+  auto hard_st = raft->GetHardState();
+  if (!(hard_st == prev_hard_st)) {
+    rd.hard_state = hard_st;
+  }
+
+  if (raft->GetRaftLog()->UnstableSnapshot()) {
+    rd.snapshot = raft->GetRaftLog()->UnstableSnapshot();
+  }
+
+  if (!raft->GetReadStates().empty()) {
+    rd.read_states = raft->GetReadStates();
+  }
+
+  rd.must_sync = MustSync(raft->GetHardState(), prev_hard_st, rd.entries.size());
+  return rd;
 }
 
 }  // namespace craft

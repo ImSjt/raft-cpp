@@ -48,8 +48,8 @@ enum CampaignType {
 };
 
 struct SoftState {
-  uint64_t lead;
-  RaftStateType raft_state;
+  uint64_t lead = 0;
+  RaftStateType raft_state = RaftStateType::kFollower;
 };
 
 // Ready encapsulates the entries and messages that are ready to read,
@@ -303,7 +303,10 @@ class Raft {
   // the configuration of state machine. If this method returns false, the
   // snapshot was ignored, either because it was obsolete or because of an
   // error.
-  bool Restore(raftpb::Snapshot* s);
+  bool Restore(SnapshotPtr s);
+  // bool Restore(raftpb::Snapshot* s) {
+  //   return Restore(std::make_shared<raftpb::Snapshot>(*s));
+  // }
 
   // Promotable indicates whether state machine can be promoted to leader,
   // which is true when its own id is in progress list.
@@ -386,6 +389,8 @@ class Raft {
     ClearMsgs();
     return ms;
   }
+
+  uint64_t PendingConfIndex() const { return pending_conf_index_; }
 
   void SetUncommittedSize(uint64_t uncommitted_size) { uncommitted_size_ = uncommitted_size; }
   uint64_t UncommittedSize() const { return uncommitted_size_; }

@@ -134,8 +134,12 @@ class RawNode {
 
  private:
   std::unique_ptr<Raft> raft_;
-  std::optional<SoftState> prev_soft_st_;
-  std::optional<raftpb::HardState> prev_hard_st_;
+  // std::optional<SoftState> prev_soft_st_;
+  // std::optional<raftpb::HardState> prev_hard_st_;
+  SoftState prev_soft_st_;
+  raftpb::HardState prev_hard_st_;
 };
+
+Ready NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardState& prev_hard_st);
 
 }  // namespace craft

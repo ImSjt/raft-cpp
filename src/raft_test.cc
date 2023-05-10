@@ -19,6 +19,7 @@
 
 #include "gtest/gtest.h"
 #include "raft.h"
+#include "rawnode.h"
 #include "util.h"
 #include "raftpb/confchange.h"
 
@@ -2508,6 +2509,609 @@ TEST(Raft, LeaderIncreaseNext) {
     auto p = sm->Get()->GetTracker().GetProgress(2);
     ASSERT_EQ(p->Next(), tt.wnext);
   }
+}
+
+TEST(Raft, SendAppendForProgressProbe) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+  r->ReadMessages();
+  r->Get()->GetTracker().GetProgress(2)->BecomeProbe();
+
+  // each round is a heartbeat
+  for (int i = 0; i < 3; i++) {
+    if (i == 0) {
+			// we expect that raft will only send out one msgAPP on the first
+			// loop. After that, the follower is paused until a heartbeat response is
+			// received.
+      r->Get()->AppendEntry({NEW_ENT().Data("somedata")()});
+      r->Get()->SendAppend(2);
+      auto msg = r->ReadMessages();
+      ASSERT_EQ(msg.size(), 1);
+      ASSERT_EQ(msg[0]->index(), 0);
+    }
+
+    ASSERT_EQ(r->Get()->GetTracker().GetProgress(2)->ProbeSent(), true);
+    for (int j = 0; j < 10; j++) {
+      r->Get()->AppendEntry({NEW_ENT().Data("somedata")()});
+      r->Get()->SendAppend(2);
+      ASSERT_EQ(r->ReadMessages().size(), 0);
+    }
+
+    // do  a heartbeat
+    for (int j = 0; j < r->Get()->HeartbeatTimeout(); j++) {
+      r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)());
+    }
+    ASSERT_EQ(r->Get()->GetTracker().GetProgress(2)->ProbeSent(), true);
+
+    // consume the heartbeat
+    auto msg = r->ReadMessages();
+    ASSERT_EQ(msg.size(), 1);
+    ASSERT_EQ(msg[0]->type(), raftpb::MessageType::MsgHeartbeat);
+  }
+
+	// a heartbeat response will allow another message to be sent
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgHeartbeatResp)());
+  auto msg = r->ReadMessages();
+  ASSERT_EQ(msg.size(), 1);
+  ASSERT_EQ(msg[0]->index(), 0);
+  ASSERT_EQ(r->Get()->GetTracker().GetProgress(2)->ProbeSent(), true);
+}
+
+TEST(Raft, SendAppendForProgressReplicate) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+  r->ReadMessages();
+  r->Get()->GetTracker().GetProgress(2)->BecomeReplicate();
+
+  for (int i = 0; i < 10; i++) {
+    ASSERT_TRUE(r->Get()->AppendEntry({NEW_ENT().Data("somedata")()}));
+    r->Get()->SendAppend(2);
+    auto msgs = r->ReadMessages();
+    ASSERT_EQ(msgs.size(), 1);
+  }
+}
+
+TEST(Raft, SendAppendForProgressSnapshot) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+  r->ReadMessages();
+  r->Get()->GetTracker().GetProgress(2)->BecomeSnapshot(10);
+
+  for (int i = 0; i < 10; i++) {
+    ASSERT_TRUE(r->Get()->AppendEntry({NEW_ENT().Data("somedata")()}));
+    r->Get()->SendAppend(2);
+    auto msgs = r->ReadMessages();
+    ASSERT_EQ(msgs.size(), 0);
+  }
+}
+
+TEST(Raft, RecvMsgUnreachable) {
+  craft::EntryPtrs previous_ents = {NEW_ENT().Term(1).Index(1)(), NEW_ENT().Term(1).Index(2)(), NEW_ENT().Term(1).Index(3)()};
+  auto s = newTestMemoryStorage({withPeers({1, 2})});
+  s->Append(previous_ents);
+  auto r = newTestRaft(1, 10, 1, s);
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+  r->ReadMessages();
+  // set node 2 to state replicate
+  r->Get()->GetTracker().GetProgress(2)->SetMatch(3);
+  r->Get()->GetTracker().GetProgress(2)->BecomeReplicate();
+  r->Get()->GetTracker().GetProgress(2)->OptimisticUpdate(5);
+
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgUnreachable)());
+  ASSERT_EQ(r->Get()->GetTracker().GetProgress(2)->State(), craft::StateType::kProbe);
+  ASSERT_EQ(r->Get()->GetTracker().GetProgress(2)->Next(), r->Get()->GetTracker().GetProgress(2)->Match()+1);
+}
+
+TEST(Raft, Restore) {
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(3);
+
+  auto storage = newTestMemoryStorage({withPeers({1, 2})});
+  auto sm = newTestRaft(1, 10, 1, storage);
+  ASSERT_TRUE(sm->Get()->Restore(s));
+
+  ASSERT_EQ(sm->Get()->GetRaftLog()->LastIndex(), s->metadata().index());
+  auto [term, s1] = sm->Get()->GetRaftLog()->Term(s->metadata().index());
+  ASSERT_TRUE(s1.IsOK());
+  ASSERT_EQ(term, s->metadata().term());
+
+  auto sg = sm->Get()->GetTracker().VoterNodes();
+  std::vector<uint64_t> wvoters = {1, 2, 3};
+  ASSERT_EQ(sg, wvoters);
+
+  ASSERT_FALSE(sm->Get()->Restore(s));
+  // It should not campaign before actually applying data.
+  for (int64_t i = 0; i < sm->Get()->RandomizedElectionTimeout(); i++) {
+    sm->Get()->Tick();
+  }
+
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+// TestRestoreWithLearner restores a snapshot which contains learners.
+TEST(Raft, RestoreWithLearner) {
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  s->mutable_metadata()->mutable_conf_state()->add_learners(3);
+
+  auto storage = newTestMemoryStorage({withPeers({1, 2}), withLearners({3})});
+  auto sm = newTestLearnerRaft(3, 8, 2, storage);
+  ASSERT_TRUE(sm->Get()->Restore(s));
+
+  ASSERT_EQ(sm->Get()->GetRaftLog()->LastIndex(), s->metadata().index());
+  auto [term, s1] = sm->Get()->GetRaftLog()->Term(s->metadata().index());
+  ASSERT_TRUE(s1.IsOK());
+  ASSERT_EQ(term, s->metadata().term());
+
+  auto sg = sm->Get()->GetTracker().VoterNodes();
+  std::vector<uint64_t> wvoters = {1, 2};
+  ASSERT_EQ(sg, wvoters);
+
+  auto lns = sm->Get()->GetTracker().LearnerNodes();
+  std::vector<uint64_t> wlearners = {3};
+  ASSERT_EQ(lns, wlearners);
+
+  for (auto n : wvoters) {
+    ASSERT_FALSE(sm->Get()->GetTracker().GetProgress(n)->IsLearner());
+  }
+
+  for (auto n : wlearners) {
+    ASSERT_TRUE(sm->Get()->GetTracker().GetProgress(n)->IsLearner());
+  }
+
+  ASSERT_FALSE(sm->Get()->Restore(s));
+}
+
+// Tests if outgoing voter can receive and apply snapshot correctly.
+TEST(Raft, RestoreWithVotersOutgoing) {
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(3);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(4);
+  s->mutable_metadata()->mutable_conf_state()->add_voters_outgoing(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters_outgoing(2);
+  s->mutable_metadata()->mutable_conf_state()->add_voters_outgoing(3);
+
+  auto storage = newTestMemoryStorage({withPeers({1, 2})});
+  auto sm = newTestRaft(1, 10, 1, storage);
+  ASSERT_TRUE(sm->Get()->Restore(s));
+
+  ASSERT_EQ(sm->Get()->GetRaftLog()->LastIndex(), s->metadata().index());
+  auto [term, s1] = sm->Get()->GetRaftLog()->Term(s->metadata().index());
+  ASSERT_TRUE(s1.IsOK());
+  ASSERT_EQ(term, s->metadata().term());
+
+  auto sg = sm->Get()->GetTracker().VoterNodes();
+  std::vector<uint64_t> wvoters = {1, 2, 3, 4};
+  ASSERT_EQ(sg, wvoters);
+
+  ASSERT_FALSE(sm->Get()->Restore(s));
+	// It should not campaign before actually applying data.
+  for (int64_t i = 0; i < sm->Get()->RandomizedElectionTimeout(); i++) {
+    sm->Get()->Tick();
+  }
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+// TestRestoreVoterToLearner verifies that a normal peer can be downgraded to a
+// learner through a snapshot. At the time of writing, we don't allow
+// configuration changes to do this directly, but note that the snapshot may
+// compress multiple changes to the configuration into one: the voter could have
+// been removed, then readded as a learner and the snapshot reflects both
+// changes. In that case, a voter receives a snapshot telling it that it is now
+// a learner. In fact, the node has to accept that snapshot, or it is
+// permanently cut off from the Raft log.
+TEST(Raft, RestoreVoterToLearner) {
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  s->mutable_metadata()->mutable_conf_state()->add_learners(3);
+
+  auto storage = newTestMemoryStorage({withPeers({1, 2, 3})});
+  auto sm = newTestRaft(3, 10, 1, storage);
+
+  ASSERT_FALSE(sm->Get()->IsLearner());
+  ASSERT_TRUE(sm->Get()->Restore(s));
+}
+
+// TestRestoreLearnerPromotion checks that a learner can become to a follower after
+// restoring snapshot.
+TEST(Raft, RestoreLearnerPromotion) {
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(3);
+
+  auto storage = newTestMemoryStorage({withPeers({1, 2}), withLearners({3})});
+  auto sm = newTestLearnerRaft(3, 10, 1, storage);
+  ASSERT_TRUE(sm->Get()->IsLearner());
+  ASSERT_TRUE(sm->Get()->Restore(s));
+  ASSERT_FALSE(sm->Get()->IsLearner());
+}
+
+// TestLearnerReceiveSnapshot tests that a learner can receive a snpahost from leader
+TEST(Raft, LearnerReceiveSnapshot) {
+	// restore the state machine from a snapshot so it has a compacted log and a snapshot
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_learners(2);
+
+  auto storage = newTestMemoryStorage({withPeers({1}), withLearners({2})});
+  auto n1 = newTestRaft(1, 10, 1, storage);
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1}), withLearners({2})}));
+
+  n1->Get()->Restore(s);
+  auto ready = craft::NewReady(n1->Get(), craft::SoftState{}, raftpb::HardState{});
+  storage->ApplySnapshot(ready.snapshot);
+  n1->Get()->Advance(ready);
+
+	// Force set n1 appplied index.
+  n1->Get()->GetRaftLog()->AppliedTo(n1->Get()->GetRaftLog()->Committed());
+
+  auto nt = NetWork::New({n1, n2});
+
+  n1->Get()->SetRandomizedElectionTimeout(n1->Get()->ElectionTimeout());
+  for (int64_t i = 0; i < n1->Get()->ElectionTimeout(); i++) {
+    n1->Get()->Tick();
+  }
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)()});
+  ASSERT_EQ(n2->Get()->GetRaftLog()->Committed(), n1->Get()->GetRaftLog()->Committed());
+}
+
+TEST(Raft, RestoreIgnoreSnapshot) {
+  craft::EntryPtrs previous_ents = {NEW_ENT().Term(1).Index(1)(), NEW_ENT().Term(1).Index(2)(), NEW_ENT().Term(1).Index(3)()};
+  uint64_t commit = 1;
+  auto storage = newTestMemoryStorage({withPeers({1, 2})});
+  auto sm = newTestRaft(1, 10, 1, storage);
+  sm->Get()->GetRaftLog()->Append(previous_ents);
+  sm->Get()->GetRaftLog()->CommitTo(commit);
+
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(commit);
+  s->mutable_metadata()->set_term(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+
+  // ignore snapshot
+  ASSERT_FALSE(sm->Get()->Restore(s));
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), commit);
+
+  // ignore snapshot and fast forward commit
+  s->mutable_metadata()->set_index(commit + 1);
+  ASSERT_FALSE(sm->Get()->Restore(s));
+  ASSERT_EQ(sm->Get()->GetRaftLog()->Committed(), commit + 1);
+}
+
+TEST(Raft, ProvideSnap) {
+	// restore the state machine from a snapshot so it has a compacted log and a snapshot
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  auto storage = newTestMemoryStorage({withPeers({1})});
+  auto sm = newTestRaft(1, 10, 1, storage);
+  sm->Get()->Restore(s);
+
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+
+	// force set the next of node 2, so that node 2 needs a snapshot
+  sm->Get()->GetTracker().GetProgress(2)->SetNext(sm->Get()->GetRaftLog()->FirstIndex());
+  sm->Get()->Step(NEW_MSG()
+                      .From(2)
+                      .To(1)
+                      .Type(raftpb::MessageType::MsgAppResp)
+                      .Index(sm->Get()->GetTracker().GetProgress(2)->Next() - 1)
+                      .Reject(true)());
+
+  auto msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgSnap);
+}
+
+TEST(Raft, IgnoreProvidingSnap) {
+	// restore the state machine from a snapshot so it has a compacted log and a snapshot
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  auto storage = newTestMemoryStorage({withPeers({1})});
+  auto sm = newTestRaft(1, 10, 1, storage);
+  sm->Get()->Restore(s);
+
+  sm->Get()->BecomeCandidate();
+  sm->Get()->BecomeLeader();
+
+	// force set the next of node 2, so that node 2 needs a snapshot
+	// change node 2 to be inactive, expect node 1 ignore sending snapshot to 2
+  sm->Get()->GetTracker().GetProgress(2)->SetNext(sm->Get()->GetRaftLog()->FirstIndex()-1);
+  sm->Get()->GetTracker().GetProgress(2)->SetRecentActive(false);
+
+  sm->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
+  auto msgs = sm->ReadMessages();
+  ASSERT_EQ(msgs.size(), 0);
+}
+
+TEST(Raft, RestoreFromSnapMsg) {
+  auto s = std::make_shared<raftpb::Snapshot>();
+  s->mutable_metadata()->set_index(11);  // magic number
+  s->mutable_metadata()->set_term(11);  // magic number
+  s->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  s->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  auto m = NEW_MSG().Type(raftpb::MessageType::MsgSnap).From(1).Term(2).Snapshot(s)();
+
+  auto sm = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  sm->Step(m);
+  ASSERT_EQ(sm->Get()->Lead(), 1);
+}
+
+TEST(Raft, SlowNodeRestore) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+  for (int j = 0; j <= 100; j++) {
+    nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+  }
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  nextEnts(lead->Get(), nt->Storages()[1]);
+  raftpb::ConfState cs;
+  for (auto n : lead->Get()->GetTracker().VoterNodes()) {
+    cs.add_voters(n);
+  }
+  nt->Storages()[1]->CreateSnapshot(lead->Get()->GetRaftLog()->Applied(), &cs, "");
+  nt->Storages()[1]->Compact(lead->Get()->GetRaftLog()->Applied());
+
+  nt->Recover();
+	// send heartbeats so that the leader can learn everyone is active.
+	// node 3 will only be considered as active when node 1 receives a reply from it.
+  while (1) {
+    nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgBeat)()});
+    if (lead->Get()->GetTracker().GetProgress(3)->RecentActive()) {
+      break;
+    }
+  }
+
+  // trigger a snapshot
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+
+  auto follower = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+
+  // trigger a commit
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+  ASSERT_EQ(follower->Get()->GetRaftLog()->Committed(), lead->Get()->GetRaftLog()->Committed());
+}
+
+// TestStepConfig tests that when raft step msgProp in EntryConfChange type,
+// it appends the entry to log and sets pendingConf to be true.
+TEST(Raft, StepConfig) {
+  // a raft that cannot make progress
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+  auto index = r->Get()->GetRaftLog()->LastIndex();
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Type(raftpb::EntryType::EntryConfChange)()})());
+  ASSERT_EQ(r->Get()->GetRaftLog()->LastIndex(), index + 1);
+  ASSERT_EQ(r->Get()->PendingConfIndex(), index + 1);
+}
+
+// TestStepIgnoreConfig tests that if raft step the second msgProp in
+// EntryConfChange type when the first one is uncommitted, the node will set
+// the proposal to noop and keep its original state.
+TEST(Raft, StepIgnoreConfig) {
+	// a raft that cannot make progress
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Type(raftpb::EntryType::EntryConfChange)()})());
+  auto index = r->Get()->GetRaftLog()->LastIndex();
+  auto pending_conf_index = r->Get()->PendingConfIndex();
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Type(raftpb::EntryType::EntryConfChange)()})());
+  auto [ents, status] = r->Get()->GetRaftLog()->Entries(index+1, craft::Raft::kNoLimit);
+  ASSERT_TRUE(status.IsOK());
+  ASSERT_EQ(ents.size(), 1);
+  ASSERT_EQ(ents[0]->type(), raftpb::EntryType::EntryNormal);
+  ASSERT_EQ(ents[0]->term(), 1);
+  ASSERT_EQ(ents[0]->index(), 3);
+  ASSERT_TRUE(ents[0]->data().empty());
+  ASSERT_EQ(r->Get()->PendingConfIndex(), pending_conf_index);
+}
+
+// TestNewLeaderPendingConfig tests that new leader sets its pendingConfigIndex
+// based on uncommitted entries.
+TEST(Raft, NewLeaderPendingConfig) {
+  struct Test {
+    bool add_entry;
+    uint64_t wpending_index;
+  };
+  std::vector<Test> tests = {
+    {false, 0},
+    {true, 1},
+  };
+  for (auto& tt : tests) {
+    auto r= newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+    if (tt.add_entry) {
+      ASSERT_TRUE(r->Get()->AppendEntry({NEW_ENT().Type(raftpb::EntryType::EntryNormal)()}));
+    }
+    r->Get()->BecomeCandidate();
+    r->Get()->BecomeLeader();
+    ASSERT_EQ(r->Get()->PendingConfIndex(), tt.wpending_index);
+  }
+}
+
+// TestAddNode tests that addNode could update nodes correctly.
+TEST(Raft, AddNode) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+  r->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddNode));
+  auto nodes = r->Get()->GetTracker().VoterNodes();
+  std::vector<uint64_t> wnodes = {1, 2};
+  ASSERT_EQ(nodes, wnodes);
+}
+
+// TestAddLearner tests that addLearner could update nodes correctly.
+TEST(Raft, AddLearner) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+  // Add new learner peer.
+  r->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddLearnerNode));
+  ASSERT_FALSE(r->Get()->IsLearner());
+  auto nodes = r->Get()->GetTracker().LearnerNodes();
+  std::vector<uint64_t> wnodes = {2};
+  ASSERT_EQ(nodes, wnodes);
+  ASSERT_TRUE(r->Get()->GetTracker().GetProgress(2)->IsLearner());
+
+	// Promote peer to voter.
+  r->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddNode));
+  ASSERT_FALSE(r->Get()->GetTracker().GetProgress(2)->IsLearner());
+
+  // Demote r.
+  r->Get()->ApplyConfChange(makeConfChange(1, raftpb::ConfChangeType::ConfChangeAddLearnerNode));
+  ASSERT_TRUE(r->Get()->GetTracker().GetProgress(1)->IsLearner());
+  ASSERT_TRUE(r->Get()->IsLearner());
+
+  // Promote r again.
+  r->Get()->ApplyConfChange(makeConfChange(1, raftpb::ConfChangeType::ConfChangeAddNode));
+  ASSERT_FALSE(r->Get()->GetTracker().GetProgress(1)->IsLearner());
+  ASSERT_FALSE(r->Get()->IsLearner());
+}
+
+// TestAddNodeCheckQuorum tests that addNode does not trigger a leader election
+// immediately when checkQuorum is set.
+TEST(Raft, AddNodeCheckQuorum) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+  r->Get()->SetCheckQuorum(true);
+
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+
+  for (int64_t i = 0; i < r->Get()->ElectionTimeout() - 1; i++) {
+    r->Get()->Tick();
+  }
+
+  r->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddNode));
+
+	// This tick will reach electionTimeout, which triggers a quorum check.
+  r->Get()->Tick();
+
+	// Node 1 should still be the leader after a single tick.
+  ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kLeader);
+
+	// After another electionTimeout ticks without hearing from node 2,
+	// node 1 should step down.
+  for (int64_t i = 0; i < r->Get()->ElectionTimeout(); i++) {
+    r->Get()->Tick();
+  }
+  ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+// TestRemoveNode tests that removeNode could update nodes and
+// removed list correctly.
+TEST(Raft, RemoveNode) {
+  auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2})}));
+  r->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeRemoveNode));
+  std::vector<uint64_t> w = {1};
+  ASSERT_EQ(r->Get()->GetTracker().VoterNodes(), w);
+
+	// Removing the remaining voter will panic.
+  // r->Get()->ApplyConfChange(makeConfChange(1, raftpb::ConfChangeType::ConfChangeRemoveNode));
+}
+
+// TestRemoveLearner tests that removeNode could update nodes and
+// removed list correctly.
+TEST(Raft, RemoveLearner) {
+  auto r= newTestLearnerRaft(1, 10, 1, newTestMemoryStorage({withPeers({1}), withLearners({2})}));
+  r->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeRemoveNode));
+  std::vector<uint64_t> w = {1};
+  ASSERT_EQ(r->Get()->GetTracker().VoterNodes(), w);
+
+  w = {};
+  ASSERT_EQ(r->Get()->GetTracker().LearnerNodes(), w);
+
+	// Removing the remaining voter will panic.
+  // r->Get()->ApplyConfChange(makeConfChange(1, raftpb::ConfChangeType::ConfChangeRemoveNode));
+}
+
+TEST(Raft, Promotable) {
+  uint64_t id = 1;
+  struct Test {
+    std::vector<uint64_t> peers;
+    bool wp;
+  };
+  std::vector<Test> tests = {
+    {{1}, true},
+    {{1, 2, 3}, true},
+    {{}, false},
+    {{2, 3}, false},
+  };
+  for (auto& tt : tests) {
+    auto r = newTestRaft(id, 5, 1, newTestMemoryStorage({withPeers(tt.peers)}));
+    ASSERT_EQ(r->Get()->Promotable(), tt.wp);
+  }
+}
+
+TEST(Raft, RaftNodes) {
+  struct Test {
+    std::vector<uint64_t> ids;
+    std::vector<uint64_t> wids;
+  };
+  std::vector<Test> tests = {
+    {
+      {1, 2, 3},
+      {1, 2, 3},
+    },
+    {
+      {3, 2, 1},
+      {1, 2, 3},
+    }
+  };
+  for (auto& tt : tests) {
+    auto r = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers(tt.ids)}));
+    ASSERT_EQ(r->Get()->GetTracker().VoterNodes(), tt.wids);
+  }
+}
+
+static void testCampaignWhileLeader(bool pre_vote) {
+  auto cfg = newTestConfig(1, 5, 1, newTestMemoryStorage({withPeers({1})}));
+  cfg.pre_vote = pre_vote;
+  auto r = newTestRaftWithConfig(cfg);
+  ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kFollower);
+	// We don't call campaign() directly because it comes after the check
+	// for our current state.
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)());
+  ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kLeader);
+  auto term = r->Get()->Term();
+  r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)());
+  ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(r->Get()->Term(), term);
+}
+
+TEST(Raft, CampaignWhileLeader) {
+  testCampaignWhileLeader(false);
+}
+
+TEST(Raft, PreCampaignWhileLeader) {
+  testCampaignWhileLeader(true);
 }
 
 int main(int argc, char** argv) {

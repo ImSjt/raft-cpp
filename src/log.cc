@@ -101,7 +101,7 @@ bool RaftLog::HasNextEnts() const {
 
 bool RaftLog::HasPendingSnapshot() const {
   return unstable_.Snapshot() != nullptr &&
-         IsEmptySnap(unstable_.Snapshot());
+         !IsEmptySnap(unstable_.Snapshot());
 }
 
 std::tuple<SnapshotPtr, Status> RaftLog::Snapshot() const {
