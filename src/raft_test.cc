@@ -236,6 +236,10 @@ class NetWork {
 
   craft::MsgPtrs Filter(craft::MsgPtrs msgs);
 
+  void SetMsgHook(MsgHook&& hook) {
+    msg_hook_ = std::move(hook);
+  }
+
   std::map<uint64_t, std::shared_ptr<StateMachince>>& Peers() { return peers_; }
   std::map<uint64_t, std::shared_ptr<craft::MemoryStorage>> Storages() { return storages_; }
 
@@ -462,6 +466,16 @@ static raftpb::ConfChangeV2 makeConfChange(uint64_t id, raftpb::ConfChangeType t
   cc.set_type(type);
   craft::ConfChangeI cci(std::move(cc));
   return cci.AsV2();
+}
+
+static raftpb::ConfChangeV2 makeConfChange(std::vector<std::pair<uint64_t, raftpb::ConfChangeType>> ccs) {
+  raftpb::ConfChangeV2 cc_v2;
+  for (auto& p : ccs) {
+    auto change_single = cc_v2.add_changes();
+    change_single->set_type(p.second);
+    change_single->set_node_id(p.first);
+  }
+  return cc_v2;
 }
 
 static std::string raftlogString(craft::RaftLog* l) {
@@ -3112,6 +3126,982 @@ TEST(Raft, CampaignWhileLeader) {
 
 TEST(Raft, PreCampaignWhileLeader) {
   testCampaignWhileLeader(true);
+}
+
+// TestCommitAfterRemoveNode verifies that pending commands can become
+// committed when a config change reduces the quorum requirements.
+TEST(Raft, CommitAfterRemoveNode) {
+  // Create a cluster with two nodes.
+  auto s = newTestMemoryStorage({withPeers({1, 2})});
+  auto r = newTestRaft(1, 5, 1, s);
+  r->Get()->BecomeCandidate();
+  r->Get()->BecomeLeader();
+
+  // Begin to remove the second node.
+  raftpb::ConfChange cc;
+  cc.set_type(raftpb::ConfChangeType::ConfChangeRemoveNode);
+  cc.set_node_id(2);
+  auto cc_data = cc.SerializeAsString();
+  r->Step(NEW_MSG().Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Type(raftpb::EntryType::EntryConfChange).Data(cc_data)()})());
+
+	// Stabilize the log and make sure nothing is committed yet.
+  auto ents = nextEnts(r->Get(), s);
+  ASSERT_EQ(ents.size(), 0);
+  auto cc_index = r->Get()->GetRaftLog()->LastIndex();
+
+	// While the config change is pending, make another proposal.
+  r->Step(NEW_MSG().Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Type(raftpb::EntryType::EntryNormal).Data("hello")()})());
+
+	// Node 2 acknowledges the config change, committing it.
+  r->Step(NEW_MSG().Type(raftpb::MessageType::MsgAppResp).From(2).Index(cc_index)());
+  ents = nextEnts(r->Get(), s);
+  ASSERT_EQ(ents.size(), 2);
+  ASSERT_EQ(ents[0]->type(), raftpb::EntryType::EntryNormal);
+  ASSERT_EQ(ents[0]->data().empty(), true);
+  ASSERT_EQ(ents[1]->type(), raftpb::EntryType::EntryConfChange);
+
+	// Apply the config change. This reduces quorum requirements so the
+	// pending command can now commit.
+  r->Get()->ApplyConfChange(craft::ConfChangeI(cc).AsV2());
+  ents = nextEnts(r->Get(), s);
+  ASSERT_EQ(ents.size(), 1);
+  ASSERT_EQ(ents[0]->type(), raftpb::EntryType::EntryNormal);
+  ASSERT_EQ(ents[0]->data(), "hello");
+}
+
+static void checkLeaderTransferState(craft::Raft* r, craft::RaftStateType state, uint64_t lead) {
+  ASSERT_EQ(r->State(), state);
+  ASSERT_EQ(r->Lead(), lead);
+  ASSERT_EQ(r->LeadTransferee(), craft::Raft::kNone);
+}
+
+// TestLeaderTransferToUpToDateNode verifies transferring should succeed
+// if the transferee has the most up-to-date log entries when transfer starts.
+TEST(Raft, LeaderTransferToUpToDateNode) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(lead->Get()->Lead(), 1);
+
+  // Transfer leadership to 2.
+  nt->Send({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 2);
+
+	// After some log replication, transfer leadership back to 1.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+
+  nt->Send({NEW_MSG().From(1).To(2).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+// TestLeaderTransferToUpToDateNodeFromFollower verifies transferring should succeed
+// if the transferee has the most up-to-date log entries when transfer starts.
+// Not like TestLeaderTransferToUpToDateNode, where the leader transfer message
+// is sent to the leader, in this test case every leader transfer message is sent
+// to the follower.
+TEST(Raft, LeaderTransferToUpToDateNodeFromFollower) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(lead->Get()->Lead(), 1);
+
+  // Transfer leadership to 2.
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgTransferLeader)()});
+
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 2);
+
+	// After some log replication, transfer leadership back to 1.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+// TestLeaderTransferWithCheckQuorum ensures transferring leader still works
+// even the current leader is still under its leader lease
+TEST(Raft, LeaderTransferWithCheckQuorum) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  for (int i = 1; i < 4; i++) {
+    auto r = std::dynamic_pointer_cast<Raft>(nt->Peers()[i]);
+    r->Get()->SetCheckQuorum(true);
+    r->Get()->SetRandomizedElectionTimeout(r->Get()->ElectionTimeout() + i);
+  }
+
+	// Letting peer 2 electionElapsed reach to timeout so that it can vote for peer 1
+  auto f = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  for (int64_t i = 0; i < f->Get()->ElectionTimeout(); i++) {
+    f->Get()->Tick();
+  }
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(lead->Get()->Lead(), 1);
+
+	// Transfer leadership to 2.
+  nt->Send({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 2);
+
+  // After some log replication, transfer leadership back to 1.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+
+  nt->Send({NEW_MSG().From(1).To(2).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+TEST(Raft, LeaderTransferToSlowFollower) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+
+  nt->Recover();
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(lead->Get()->GetTracker().GetProgress(3)->Match(), 1);
+
+	// Transfer leadership to 3 when node 3 is lack of log.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 3);
+}
+
+TEST(Raft, LeaderTransferAfterSnapshot) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  nextEnts(lead->Get(), nt->Storages()[1]);
+  raftpb::ConfState cs;
+  for (auto n : lead->Get()->GetTracker().VoterNodes()) {
+    cs.add_voters(n);
+  }
+  nt->Storages()[1]->CreateSnapshot(lead->Get()->GetRaftLog()->Applied(), &cs, "");
+  nt->Storages()[1]->Compact(lead->Get()->GetRaftLog()->Applied());
+
+  nt->Recover();
+  ASSERT_EQ(lead->Get()->GetTracker().GetProgress(3)->Match(), 1);
+
+  auto filtered = NEW_MSG()();
+  // Snapshot needs to be applied before sending MsgAppResp
+  nt->SetMsgHook([&filtered](craft::MsgPtr m) {
+    if (m->type() != raftpb::MessageType::MsgAppResp || m->from() != 3 || m->reject()) {
+      return true;
+    }
+    *filtered = *m;
+    return false;
+  });
+	// Transfer leadership to 3 when node 3 is lack of snapshot.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(filtered->entries().size(), 0);
+
+  // Apply snapshot and resume progress
+  auto follower = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  auto ready = craft::NewReady(follower->Get(), craft::SoftState{}, raftpb::HardState{});
+  nt->Storages()[3]->ApplySnapshot(ready.snapshot);
+  follower->Get()->Advance(ready);
+  nt->SetMsgHook(nullptr);
+  nt->Send({filtered});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 3);
+}
+
+TEST(Raft, LeaderTransferToSelf) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+TEST(Raft, LeaderTransferToNonExistingNode) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+	// Transfer leadership to non-existing node, there will be noop.
+  nt->Send({NEW_MSG().From(4).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+TEST(Raft, LeaderTransferTimeout) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+	// Transfer leadership to isolated node, wait for timeout.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+  for (int64_t i = 0; i < lead->Get()->HeartbeatTimeout(); i++) {
+    lead->Get()->Tick();
+  }
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+  for (int64_t i = 0; i < lead->Get()->ElectionTimeout() - lead->Get()->HeartbeatTimeout(); i++) {
+    lead->Get()->Tick();
+  }
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+TEST(Raft, LeaderTransferIgnoreProposal) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+  // Transfer leadership to isolated node to let transfer pending, then send proposal.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})()});
+  auto status = lead->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT()()})());
+  ASSERT_STREQ(status.Str(), craft::kErrProposalDropped);
+  ASSERT_EQ(lead->Get()->GetTracker().GetProgress(1)->Match(), 1);
+}
+
+TEST(Raft, LeaderTransferReceiveHigherTermVote) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+	// The LeadTransferee is removed when leadship transferring.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup).Index(1).Term(2)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 2);
+}
+
+TEST(Raft, LeaderTransferRemoveNode) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Ignore(raftpb::MessageType::MsgTimeoutNow);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+  // The LeadTransferee is removed when leadship transferring.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+  lead->Get()->ApplyConfChange(makeConfChange(3, raftpb::ConfChangeType::ConfChangeRemoveNode));
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+TEST(Raft, LeaderTransferDemoteNode) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Ignore(raftpb::MessageType::MsgTimeoutNow);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+	// The LeadTransferee is demoted when leadship transferring.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+  lead->Get()->ApplyConfChange(
+      makeConfChange({{3, raftpb::ConfChangeType::ConfChangeRemoveNode},
+                      {3, raftpb::ConfChangeType::ConfChangeAddLearnerNode}}));
+
+	// Make the Raft group commit the LeaveJoint entry.
+  lead->Get()->ApplyConfChange({});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+// TestLeaderTransferBack verifies leadership can transfer back to self when last transfer is pending.
+TEST(Raft, LeaderTransferBack) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+	// Transfer leadership back to self.
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+// TestLeaderTransferSecondTransferToAnotherNode verifies leader can transfer to another node
+// when last transfer is pending.
+TEST(Raft, LeaderTransferSecondTransferToAnotherNode) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+	// Transfer leadership to another node.
+  nt->Send({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 2);
+}
+
+// TestLeaderTransferSecondTransferToSameNode verifies second transfer leader request
+// to the same node should not extend the timeout while the first one is pending.
+TEST(Raft, LeaderTransferSecondTransferToSameNode) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  nt->Isolate(3);
+
+  auto lead = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(lead->Get()->LeadTransferee(), 3);
+
+  for (int64_t i = 0; i < lead->Get()->HeartbeatTimeout(); i++) {
+    lead->Get()->Tick();
+  }
+	// Second transfer leadership request to the same node.
+  nt->Send({NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  for (int64_t i = 0; i < lead->Get()->ElectionTimeout() - lead->Get()->HeartbeatTimeout(); i++) {
+    lead->Get()->Tick();
+  }
+  checkLeaderTransferState(lead->Get(), craft::RaftStateType::kLeader, 1);
+}
+
+// TestTransferNonMember verifies that when a MsgTimeoutNow arrives at
+// a node that has been removed from the group, nothing happens.
+// (previously, if the node also got votes, it would panic as it
+// transitioned to StateLeader)
+TEST(Raft, TransferNonMember) {
+  auto r = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({2, 3, 4})}));
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgTimeoutNow)());
+  r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgVoteResp)());
+  r->Step(NEW_MSG().From(3).To(1).Type(raftpb::MessageType::MsgVoteResp)());
+  ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+// TestNodeWithSmallerTermCanCompleteElection tests the scenario where a node
+// that has been partitioned away (and fallen behind) rejoins the cluster at
+// about the same time the leader node gets partitioned away.
+// Previously the cluster would come to a standstill when run with PreVote
+// enabled.
+TEST(Raft, NodeWithSmallerTermCanCompleteElection) {
+  auto n1 = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n3 = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  n1->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n2->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n3->Get()->BecomeFollower(1, craft::Raft::kNone);
+
+  n1->Get()->SetPreVote(true);
+  n2->Get()->SetPreVote(true);
+  n3->Get()->SetPreVote(true);
+
+	// cause a network partition to isolate node 3
+  auto nt = NetWork::New({n1, n2, n3});
+  nt->Cut(1, 3);
+  nt->Cut(2, 3);
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kPreCandidate);
+
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+
+	// check whether the term values are expected
+	// a.Term == 3
+	// b.Term == 3
+	// c.Term == 1
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->Term(), 3);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->Term(), 3);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->Term(), 1);
+
+	// check state
+	// a == follower
+	// b == leader
+	// c == pre-candidate
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kPreCandidate);
+
+  std::cout << "going to bring back peer 3 and kill peer 2" << std::endl;
+	// recover the network then immediately isolate b which is currently
+	// the leader, this is to emulate the crash of b.
+  nt->Recover();
+  nt->Cut(2, 1);
+  nt->Cut(2, 3);
+
+	// call for election
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+  auto sma = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  auto smb = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+	// do we have a leader?
+  ASSERT_FALSE(sma->Get()->State() != craft::RaftStateType::kLeader && smb->Get()->State() != craft::RaftStateType::kLeader);
+}
+
+// TestPreVoteWithSplitVote verifies that after split vote, cluster can complete
+// election in next round.
+TEST(Raft, PreVoteWithSplitVote) {
+  auto n1 = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n3 = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  n1->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n2->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n3->Get()->BecomeFollower(1, craft::Raft::kNone);
+
+  n1->Get()->SetPreVote(true);
+  n2->Get()->SetPreVote(true);
+  n3->Get()->SetPreVote(true);
+
+  auto nt = NetWork::New({n1, n2, n3});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+	// simulate leader down. followers start split vote.
+  nt->Isolate(1);
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)(),
+            NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+
+	// check whether the term values are expected
+	// n2.Term == 3
+	// n3.Term == 3
+  auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->Term(), 3);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->Term(), 3);
+
+	// check state
+	// n2 == candidate
+	// n3 == candidate
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kCandidate);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kCandidate);
+
+	// node 2 election timeout first
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+
+	// check whether the term values are expected
+	// n2.Term == 4
+	// n3.Term == 4
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->Term(), 4);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->Term(), 4);
+
+	// check state
+	// n2 == leader
+	// n3 == follower
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+// TestPreVoteWithCheckQuorum ensures that after a node become pre-candidate,
+// it will checkQuorum correctly.
+TEST(Raft, PreVoteWithCheckQuorum) {
+  auto n1 = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n3 = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  n1->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n2->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n3->Get()->BecomeFollower(1, craft::Raft::kNone);
+
+  n1->Get()->SetPreVote(true);
+  n2->Get()->SetPreVote(true);
+  n3->Get()->SetPreVote(true);
+
+  n1->Get()->SetCheckQuorum(true);
+  n2->Get()->SetCheckQuorum(true);
+  n3->Get()->SetCheckQuorum(true);
+
+  auto nt = NetWork::New({n1, n2, n3});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+	// isolate node 1. node 2 and node 3 have leader info
+  nt->Isolate(1);
+
+	// check state
+  auto sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kLeader);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+
+  sm = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+  ASSERT_EQ(sm->Get()->State(), craft::RaftStateType::kFollower);
+
+	// node 2 will ignore node 3's PreVote
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+
+	// Do we have a leader?
+  ASSERT_FALSE(n2->Get()->State() != craft::RaftStateType::kLeader &&
+               n3->Get()->State() != craft::RaftStateType::kLeader);
+}
+
+// TestLearnerCampaign verifies that a learner won't campaign even if it receives
+// a MsgHup or MsgTimeoutNow.
+TEST(Raft, LearnerCampaign) {
+  auto n1 = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
+  n1->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddLearnerNode));
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1})}));
+  n2->Get()->ApplyConfChange(makeConfChange(2, raftpb::ConfChangeType::ConfChangeAddLearnerNode));
+  auto nt = NetWork::New({n1, n2});
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+
+  ASSERT_TRUE(n2->Get()->IsLearner());
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(n1->Get()->Lead(), 1);
+
+	// NB: TransferLeader already checks that the recipient is not a learner, but
+	// the check could have happened by the time the recipient becomes a learner,
+	// in which case it will receive MsgTimeoutNow as in this test case and we
+	// verify that it's ignored.
+  nt->Send({NEW_MSG().From(1).To(2).Type(raftpb::MessageType::MsgTimeoutNow)()});
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+}
+
+// simulate rolling update a cluster for Pre-Vote. cluster has 3 nodes [n1, n2, n3].
+// n1 is leader with term 2
+// n2 is follower with term 2
+// n3 is partitioned, with term 4 and less log, state is candidate
+std::shared_ptr<NetWork> newPreVoteMigrationCluster() {
+  auto n1 = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n2 = newTestRaft(2, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+  auto n3 = newTestRaft(3, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
+
+  n1->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n2->Get()->BecomeFollower(1, craft::Raft::kNone);
+  n3->Get()->BecomeFollower(1, craft::Raft::kNone);
+
+  n1->Get()->SetPreVote(true);
+  n2->Get()->SetPreVote(true);
+	// We intentionally do not enable PreVote for n3, this is done so in order
+	// to simulate a rolling restart process where it's possible to have a mixed
+	// version cluster with replicas with PreVote enabled, and replicas without.
+
+  auto nt = NetWork::New({n1, n2, n3});
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+
+	// Cause a network partition to isolate n3.
+  nt->Isolate(3);
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("some data")()})()});
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+
+	// check state
+	// n1.state == StateLeader
+	// n2.state == StateFollower
+	// n3.state == StateCandidate
+  EXPECT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+  EXPECT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  EXPECT_EQ(n3->Get()->State(), craft::RaftStateType::kCandidate);
+
+	// check term
+	// n1.Term == 2
+	// n2.Term == 2
+	// n3.Term == 4
+  EXPECT_EQ(n1->Get()->Term(), 2);
+  EXPECT_EQ(n2->Get()->Term(), 2);
+  EXPECT_EQ(n3->Get()->Term(), 4);
+
+	// Enable prevote on n3, then recover the network
+  n3->Get()->SetPreVote(true);
+  nt->Recover();
+  return nt;
+}
+
+TEST(Raft, PreVoteMigrationCanCompleteElection) {
+  auto nt = newPreVoteMigrationCluster();
+
+  auto n2 = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  auto n3 = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+
+  // simulate leader down
+  nt->Isolate(1);
+
+	// Call for elections from both n2 and n3.
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+
+	// check state
+	// n2.state == Follower
+	// n3.state == PreCandidate
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->State(), craft::RaftStateType::kPreCandidate);
+
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  nt->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgHup)()});
+
+	// Do we have a leader?
+  ASSERT_FALSE(n2->Get()->State() != craft::RaftStateType::kLeader &&
+               n3->Get()->State() != craft::RaftStateType::kLeader);
+}
+
+TEST(Raft, PreVoteMigrationWithFreeStuckPreCandidate) {
+  auto nt = newPreVoteMigrationCluster();
+
+	// n1 is leader with term 2
+	// n2 is follower with term 2
+	// n3 is pre-candidate with term 4, and less log
+  auto n1 = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  auto n2 = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  auto n3 = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
+
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->State(), craft::RaftStateType::kPreCandidate);
+
+	// Pre-Vote again for safety
+  nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->State(), craft::RaftStateType::kPreCandidate);
+
+  nt->Send({NEW_MSG().From(1).To(3).Type(raftpb::MessageType::MsgHeartbeat).Term(n1->Get()->Term())()});
+
+	// Disrupt the leader so that the stuck peer is freed
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n3->Get()->Term(), n1->Get()->Term());
+}
+
+void testConfChangeCheckBeforeCampaign(bool v2) {
+  auto nt = NetWork::New({nullptr, nullptr, nullptr});
+  auto n1 = std::dynamic_pointer_cast<Raft>(nt->Peers()[1]);
+  auto n2 = std::dynamic_pointer_cast<Raft>(nt->Peers()[2]);
+  nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+
+	// Begin to remove the third node.
+  raftpb::ConfChange cc;
+  cc.set_type(raftpb::ConfChangeType::ConfChangeRemoveNode);
+  cc.set_node_id(2);
+  std::string cc_data;
+  raftpb::EntryType ty;
+  if (v2) {
+    auto ccv2 = craft::ConfChangeI(cc).AsV2();
+    cc_data = ccv2.SerializeAsString();
+    ty = raftpb::EntryConfChangeV2;
+  } else {
+    cc_data = cc.SerializeAsString();
+    ty = raftpb::EntryConfChange;
+  }
+  nt->Send({NEW_MSG()
+                .From(1)
+                .To(1)
+                .Type(raftpb::MessageType::MsgProp)
+                .Entries({NEW_ENT().Type(ty).Data(cc_data)()})()});
+
+	// Trigger campaign in node 2
+  for (int64_t i = 0; i < n2->Get()->RandomizedElectionTimeout(); i++) {
+    n2->Get()->Tick();
+  }
+	// It's still follower because committed conf change is not applied.
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+
+	// Transfer leadership to peer 2.
+  nt->Send({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kLeader);
+	// It's still follower because committed conf change is not applied.
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kFollower);
+	// Abort transfer leader
+  for (int64_t i = 0; i < n1->Get()->RandomizedElectionTimeout(); i++) {
+    n1->Get()->Tick();
+  }
+
+	// Advance apply
+  nextEnts(n2->Get(), nt->Storages()[2]);
+
+	// Transfer leadership to peer 2 again.
+  nt->Send({NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgTransferLeader)()});
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kFollower);
+  ASSERT_EQ(n2->Get()->State(), craft::RaftStateType::kLeader);
+
+  nextEnts(n1->Get(), nt->Storages()[1]);
+	// Trigger campaign in node 2
+  for (int64_t i = 0; i < n1->Get()->RandomizedElectionTimeout(); i++) {
+    n1->Get()->Tick();
+  }
+  ASSERT_EQ(n1->Get()->State(), craft::RaftStateType::kCandidate);
+}
+
+// Tests if unapplied ConfChange is checked before campaign.
+TEST(Raft, ConfChangeCheckBeforeCampaign) {
+  testConfChangeCheckBeforeCampaign(false);
+}
+
+// Tests if unapplied ConfChangeV2 is checked before campaign.
+TEST(Raft, ConfChangeV2CheckBeforeCampaign) {
+  testConfChangeCheckBeforeCampaign(true);
+}
+
+TEST(Raft, FastLogRejection) {
+  struct Test {
+    craft::EntryPtrs leader_log;    // Logs on the leader
+    craft::EntryPtrs follower_log;  // Logs on the follower
+    uint64_t reject_hint_term;      // Expected term included in rejected MsgAppResp.
+    uint64_t reject_hint_index;     // Expected index included in rejected MsgAppResp.
+    uint64_t next_append_term;      // Expected term when leader appends after rejected.
+    uint64_t next_append_index;     // Expected index when leader appends after rejected.
+  };
+  std::vector<Test> tests = {
+		// This case tests that leader can find the conflict index quickly.
+		// Firstly leader appends (type=MsgApp,index=7,logTerm=4, entries=...);
+		// After rejected leader appends (type=MsgApp,index=3,logTerm=2).
+    {
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+        NEW_ENT().Term(4).Index(5)(),
+        NEW_ENT().Term(4).Index(6)(),
+        NEW_ENT().Term(4).Index(7)(),
+      },
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(3).Index(4)(),
+        NEW_ENT().Term(3).Index(5)(),
+        NEW_ENT().Term(3).Index(6)(),
+        NEW_ENT().Term(3).Index(7)(),
+        NEW_ENT().Term(3).Index(8)(),
+        NEW_ENT().Term(3).Index(9)(),
+        NEW_ENT().Term(3).Index(10)(),
+        NEW_ENT().Term(3).Index(11)(),
+      },
+      3, 7, 2, 3,
+    },
+		// This case tests that leader can find the conflict index quickly.
+		// Firstly leader appends (type=MsgApp,index=8,logTerm=5, entries=...);
+		// After rejected leader appends (type=MsgApp,index=4,logTerm=3).
+    {
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(3).Index(4)(),
+        NEW_ENT().Term(4).Index(5)(),
+        NEW_ENT().Term(4).Index(6)(),
+        NEW_ENT().Term(4).Index(7)(),
+        NEW_ENT().Term(5).Index(8)(),
+      },
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(3).Index(4)(),
+        NEW_ENT().Term(3).Index(5)(),
+        NEW_ENT().Term(3).Index(6)(),
+        NEW_ENT().Term(3).Index(7)(),
+        NEW_ENT().Term(3).Index(8)(),
+        NEW_ENT().Term(3).Index(9)(),
+        NEW_ENT().Term(3).Index(10)(),
+        NEW_ENT().Term(3).Index(11)(),
+      },
+      3, 8, 3, 4,
+    },
+		// This case is similar to the previous case. However, this time, the
+		// leader has a longer uncommitted log tail than the follower.
+		// Firstly leader appends (type=MsgApp,index=6,logTerm=1, entries=...);
+		// After rejected leader appends (type=MsgApp,index=1,logTerm=1).
+    {
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(1).Index(2)(),
+        NEW_ENT().Term(1).Index(3)(),
+        NEW_ENT().Term(1).Index(4)(),
+        NEW_ENT().Term(1).Index(5)(),
+        NEW_ENT().Term(1).Index(6)(),
+      },
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+      },
+      1, 1, 1, 1,
+    },
+		// This case is similar to the previous case. However, this time, the
+		// follower has a longer uncommitted log tail than the leader.
+		// Firstly leader appends (type=MsgApp,index=4,logTerm=1, entries=...);
+		// After rejected leader appends (type=MsgApp,index=1,logTerm=1).
+    {
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(1).Index(2)(),
+        NEW_ENT().Term(1).Index(3)(),
+        NEW_ENT().Term(1).Index(4)(),
+        NEW_ENT().Term(1).Index(5)(),
+        NEW_ENT().Term(1).Index(6)(),
+      },
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+        NEW_ENT().Term(4).Index(5)(),
+        NEW_ENT().Term(4).Index(6)(),
+      },
+      1, 1, 1, 1,
+    },
+		// An normal case that there are no log conflicts.
+		// Firstly leader appends (type=MsgApp,index=5,logTerm=5, entries=...);
+		// After rejected leader appends (type=MsgApp,index=4,logTerm=4).
+    {
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(1).Index(2)(),
+        NEW_ENT().Term(1).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+        NEW_ENT().Term(5).Index(5)(),
+      },
+      {
+        NEW_ENT().Term(1).Index(1)(),
+        NEW_ENT().Term(1).Index(2)(),
+        NEW_ENT().Term(1).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+      },
+      4, 4, 4, 4,
+    },
+    // Test case from example comment in stepLeader (on leader).
+    {
+      {
+        NEW_ENT().Term(2).Index(1)(),
+        NEW_ENT().Term(5).Index(2)(),
+        NEW_ENT().Term(5).Index(3)(),
+        NEW_ENT().Term(5).Index(4)(),
+        NEW_ENT().Term(5).Index(5)(),
+        NEW_ENT().Term(5).Index(6)(),
+        NEW_ENT().Term(5).Index(7)(),
+        NEW_ENT().Term(5).Index(8)(),
+        NEW_ENT().Term(5).Index(9)(),
+      },
+      {
+        NEW_ENT().Term(2).Index(1)(),
+        NEW_ENT().Term(4).Index(2)(),
+        NEW_ENT().Term(4).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+        NEW_ENT().Term(4).Index(5)(),
+        NEW_ENT().Term(4).Index(6)(),
+      },
+      4, 6, 2, 1,
+    },
+    // Test case from example comment in handleAppendEntries (on follower).
+    {
+      {
+        NEW_ENT().Term(2).Index(1)(),
+        NEW_ENT().Term(2).Index(2)(),
+        NEW_ENT().Term(2).Index(3)(),
+        NEW_ENT().Term(2).Index(4)(),
+        NEW_ENT().Term(2).Index(5)(),
+      },
+      {
+        NEW_ENT().Term(2).Index(1)(),
+        NEW_ENT().Term(4).Index(2)(),
+        NEW_ENT().Term(4).Index(3)(),
+        NEW_ENT().Term(4).Index(4)(),
+        NEW_ENT().Term(4).Index(5)(),
+        NEW_ENT().Term(4).Index(6)(),
+        NEW_ENT().Term(4).Index(7)(),
+        NEW_ENT().Term(4).Index(8)(),
+      },
+      2, 1, 2, 1,
+    },
+  };
+  for (auto& tt : tests) {
+    auto s1 = std::make_shared<craft::MemoryStorage>();
+    s1->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(1);
+    s1->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(2);
+    s1->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(3);
+    s1->Append(tt.leader_log);
+    auto s2 = std::make_shared<craft::MemoryStorage>();
+    s2->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(1);
+    s2->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(2);
+    s2->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(3);
+    s2->Append(tt.follower_log);
+
+    auto n1 = newTestRaft(1, 10, 1, s1);
+    auto n2 = newTestRaft(2, 10, 1, s2);
+
+    n1->Get()->BecomeCandidate();
+    n1->Get()->BecomeLeader();
+
+    n2->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHeartbeat)());
+
+    auto msgs = n2->ReadMessages();
+    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgHeartbeatResp);
+    ASSERT_TRUE(n1->Step(msgs[0]).IsOK());
+
+    msgs = n1->ReadMessages();
+    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgApp);
+
+    ASSERT_TRUE(n2->Step(msgs[0]).IsOK());
+    msgs = n2->ReadMessages();
+    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgAppResp);
+    ASSERT_EQ(msgs[0]->reject(), true);
+    ASSERT_EQ(msgs[0]->logterm(), tt.reject_hint_term);
+    ASSERT_EQ(msgs[0]->rejecthint(), tt.reject_hint_index);
+
+    ASSERT_TRUE(n1->Step(msgs[0]).IsOK());
+    msgs = n1->ReadMessages();
+    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs[0]->logterm(), tt.next_append_term);
+    ASSERT_EQ(msgs[0]->index(), tt.next_append_index);
+  }
 }
 
 int main(int argc, char** argv) {

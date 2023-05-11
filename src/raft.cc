@@ -199,6 +199,7 @@ Raft::Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log)
       max_msg_size_(c.max_size_per_msg),
       max_uncommitted_size_(c.max_uncommitted_entries_size),
       trk_(c.max_inflight_msgs),
+      state_(craft::RaftStateType::kFollower),
       election_timeout_(c.election_tick),
       heartbeat_timeout_(c.heartbeat_tick),
       check_quorum_(c.check_quorum),
@@ -494,11 +495,11 @@ void Raft::TickHeartbeat() {
         LOG_DEBUG("error occurred during checking sending heartbeat: %s",
                   status.Str());
       }
-      // If current leader cannot transfer leadership in electionTimeout, it
-      // becomes leader again.
-      if (state_ == RaftStateType::kLeader && lead_transferee_ != kNone) {
-        AbortLeaderTransfer();
-      }
+    }
+    // If current leader cannot transfer leadership in electionTimeout, it
+    // becomes leader again.
+    if (state_ == RaftStateType::kLeader && lead_transferee_ != kNone) {
+      AbortLeaderTransfer();
     }
   }
 
@@ -615,6 +616,7 @@ void Raft::Hup(CampaignType t) {
         "%llu cannot campaign at term %llu since there are still %lld pending "
         "configuration changes to apply",
         id_, term_, n);
+    return;
   }
 
   LOG_INFO("%llu is starting a new election at term %llu", id_, term_);
@@ -1270,6 +1272,7 @@ Status Raft::StepLeader(MsgPtr m) {
               id_, term_, lead_transferee, lead_transferee);
           return Status::OK();
         }
+        AbortLeaderTransfer();
       }
       if (lead_transferee == id_) {
         LOG_DEBUG(
@@ -1378,6 +1381,7 @@ Status Raft::StepFollower(MsgPtr m) {
     case raftpb::MessageType::MsgHeartbeat: {
       election_elapsed_ = 0;
       lead_ = m->from();
+      std::cout << "lead:" << lead_ << ",id:" << id_ << ", handle heartbeat" << std::endl;
       HandleHearbeat(m);
       break;
     }

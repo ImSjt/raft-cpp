@@ -335,6 +335,7 @@ class Raft {
 
   void SendTimeoutNow(uint64_t to);
 
+  uint64_t LeadTransferee() const { return lead_transferee_; }
   void AbortLeaderTransfer() { lead_transferee_ = kNone; }
 
   // CommittedEntryinCurrentTerm return true if the peer has committed an entry
@@ -429,6 +430,8 @@ class Raft {
   }
 
   void SetCheckQuorum(bool v) { check_quorum_ = v; }
+
+  void SetPreVote(bool v) { pre_vote_ = v; }
 
  private:
   uint64_t id_;

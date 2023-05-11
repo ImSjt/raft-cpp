@@ -142,6 +142,8 @@ class MemoryStorage : public Storage {
   void SetEntries(const EntryPtrs& ents) { ents_ = ents; }
   const EntryPtrs& GetEntries() const { return ents_; }
 
+  SnapshotPtr GetSnapshot() { return snapshot_; }
+
  private:
   uint64_t LastIndexUnSafe() const;
   uint64_t FirstIndexUnSafe() const;
