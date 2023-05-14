@@ -175,6 +175,13 @@ class ProgressTracker {
   }
 
   const std::map<uint64_t, bool>& Votes() const { return votes_; }
+  bool IsVote(uint64_t id) const {
+    auto it = votes_.find(id);
+    if (it == votes_.end()) {
+      return false;
+    }
+    return it->second;
+  }
 
   int64_t MaxInflight() const { return max_inflight_; }
 

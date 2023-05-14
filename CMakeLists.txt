@@ -118,6 +118,8 @@ function(craft_test test_file)
     target_sources("${test_target_name}"
         PRIVATE
         "${test_file}"
+        "src/raft_test_util.cc"
+        "src/raft_test_util.h"
     )
 
     target_link_libraries("${test_target_name}" gtest gtest_main craft)
@@ -140,3 +142,6 @@ craft_test("src/log_unstable_test.cc")
 craft_test("src/storage_test.cc")
 craft_test("src/log_test.cc")
 craft_test("src/raft_test.cc")
+craft_test("src/raft_snap_test.cc")
+craft_test("src/raft_flow_control_test.cc")
+craft_test("src/raft_paper_test.cc")
