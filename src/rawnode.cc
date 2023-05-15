@@ -18,13 +18,6 @@
 
 namespace craft {
 
-// ErrStepLocalMsg is returned when try to step a local raft message
-static const char* kErrStepLocalMsg = "raft: cannot step raft local message";
-
-// ErrStepPeerNotFound is returned when try to step a response message
-// but there is no peer found in raft.prs for that node.
-static const char* kErrStepPeerNotFound = "raft: cannot step as peer not found";
-
 static std::tuple<MsgPtr, Status> ConfChangeToMsg(const ConfChangeI& cc) {
   auto [type, data, ok] = cc.Marshal();
   if (!ok) {
@@ -252,6 +245,8 @@ Ready NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardStat
 
   if (raft->GetRaftLog()->UnstableSnapshot()) {
     rd.snapshot = raft->GetRaftLog()->UnstableSnapshot();
+  } else {
+    rd.snapshot = std::make_shared<raftpb::Snapshot>();
   }
 
   if (!raft->GetReadStates().empty()) {

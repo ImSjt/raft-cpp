@@ -146,8 +146,81 @@ class Entry {
   craft::EntryPtr ent;
 };
 
+class ConfState {
+ public:
+  ConfState() { confstate = std::make_shared<raftpb::ConfState>(); }
+
+  ConfState& Voters(std::vector<uint64_t> voters) {
+    for (auto voter : voters) {
+      confstate->add_voters(voter);
+    }
+    return *this;
+  }
+
+  ConfState& Learners(std::vector<uint64_t> learners) {
+    for (auto learner : learners) {
+      confstate->add_learners(learner);
+    }
+    return *this;
+  }
+
+  ConfState& VotersOutgoing(std::vector<uint64_t> voters) {
+    for (auto voter : voters) {
+      confstate->add_voters_outgoing(voter);
+    }
+    return *this;
+  }
+
+  ConfState& LearnersNext(std::vector<uint64_t> learners) {
+    for (auto learner : learners) {
+      confstate->add_learners_next(learner);
+    }
+    return *this;
+  }
+
+  ConfState& AutoLeave(bool auto_leave) {
+    confstate->set_auto_leave(auto_leave);
+    return *this;
+  }
+
+  std::shared_ptr<raftpb::ConfState> operator()() {
+    return confstate;
+  }
+
+ private:
+  std::shared_ptr<raftpb::ConfState> confstate;
+};
+
+class ConfChange {
+ public:
+  ConfChange() {
+    confchange = std::make_shared<raftpb::ConfChangeV2>();
+  }
+
+  ConfChange& AddConf(raftpb::ConfChangeType type, uint64_t id) {
+    auto cs = confchange->add_changes();
+    cs->set_type(type);
+    cs->set_node_id(id);
+    return *this;
+  }
+
+  ConfChange& Transition(raftpb::ConfChangeTransition t) {
+    confchange->set_transition(t);
+    return *this;
+  }
+
+  std::shared_ptr<raftpb::ConfChangeV2> operator()() {
+    return confchange;
+  }
+
+ private:
+  std::shared_ptr<raftpb::ConfChangeV2> confchange;
+};
+
 #define NEW_MSG() (Message())
 #define NEW_ENT() (Entry())
+#define NEW_CONF_STATE() (ConfState())
+#define NEW_CONF_CHANGE() (ConfChange())
 
 class StateMachince {
  public:

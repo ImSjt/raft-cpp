@@ -55,7 +55,7 @@ std::tuple<raftpb::EntryType, std::string, bool> ConfChangeI::Marshal() const {
   return std::make_tuple(type, std::move(ccdata), res);
 }
 
-std::tuple<bool, bool> EnterJoint(raftpb::ConfChangeV2& cc) {
+std::tuple<bool, bool> EnterJoint(const raftpb::ConfChangeV2& cc) {
 	// NB: in theory, more config changes could qualify for the "simple"
 	// protocol but it depends on the config on top of which the changes apply.
 	// For example, adding two learners is not OK if both nodes are part of the

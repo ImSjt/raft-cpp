@@ -50,7 +50,7 @@ class ConfChangeI {
 // than one change or if the use of Joint Consensus was requested explicitly.
 // The first bool can only be true if second one is, and indicates whether the
 // Joint State will be left automatically.
-std::tuple<bool, bool> EnterJoint(raftpb::ConfChangeV2& cc);
+std::tuple<bool, bool> EnterJoint(const raftpb::ConfChangeV2& cc);
 
 // LeaveJoint is true if the configuration change leaves a joint configuration.
 // This is the case if the ConfChangeV2 is zero, with the possible exception of

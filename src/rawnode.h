@@ -33,11 +33,21 @@ enum ProgressType {
   kLearner = 2,
 };
 
+// ErrStepLocalMsg is returned when try to step a local raft message
+const char* const kErrStepLocalMsg = "raft: cannot step raft local message";
+
+// ErrStepPeerNotFound is returned when try to step a response message
+// but there is no peer found in raft.prs for that node.
+const char* const kErrStepPeerNotFound = "raft: cannot step as peer not found";
+
 class RawNode {
  public:
   using Visitor = std::function<void(uint64_t id, ProgressType type, ProgressPtr pr)>;
 
   static std::unique_ptr<RawNode> New(Raft::Config& c);
+  static std::unique_ptr<RawNode> New(Raft::Config&& c) {
+    return New(c);
+  }
 
   RawNode(std::unique_ptr<Raft>&& raft) : raft_(std::move(raft)) {
     prev_soft_st_ = raft_->GetSoftState();
@@ -131,6 +141,8 @@ class RawNode {
   // void SetPreHardState(const raftpb::HardState& state) {
   //   pre_hard_st_ = state;
   // }
+
+  Raft* GetRaft() { return raft_.get(); }
 
  private:
   std::unique_ptr<Raft> raft_;

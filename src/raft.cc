@@ -71,7 +71,7 @@ bool IsEmptyHardState(const raftpb::HardState& st) {
 }
 
 static bool IsEmptySnap(const SnapshotPtr& sp) {
-  return sp->metadata().index() == 0;
+  return sp == nullptr || sp->metadata().index() == 0;
 }
 
 static int64_t NumOfPendingConf(const EntryPtrs& ents) {
@@ -1426,6 +1426,7 @@ Status Raft::StepFollower(MsgPtr m) {
         LOG_INFO(
             "%d invalid format of MsgReadIndexResp from %d, entries count: %d",
             id_, m->from(), m->entries().size());
+        return Status::OK();
       }
       read_states_.emplace_back(ReadState{
           .index = m->index(), .request_ctx = m->entries()[0].data()});
