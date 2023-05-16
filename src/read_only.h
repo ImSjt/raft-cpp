@@ -34,6 +34,10 @@ namespace craft {
 struct ReadState {
   uint64_t index;
   std::string request_ctx;
+
+  bool operator==(const ReadState& other) const {
+    return index == other.index && request_ctx == other.request_ctx;
+  }
 };
 
 struct ReadIndexStatus {

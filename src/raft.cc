@@ -847,7 +847,6 @@ Status Raft::Step(MsgPtr m) {
       auto msg = std::make_shared<raftpb::Message>();
       msg->set_to(m->from());
       msg->set_term(m->term());
-      std::cout << "term: " << m->term() << std::endl;
       msg->set_type(Util::VoteRespMsgType(m->type()));
       Send(msg);
       if (m->type() == raftpb::MessageType::MsgVote) {
@@ -1381,7 +1380,6 @@ Status Raft::StepFollower(MsgPtr m) {
     case raftpb::MessageType::MsgHeartbeat: {
       election_elapsed_ = 0;
       lead_ = m->from();
-      std::cout << "lead:" << lead_ << ",id:" << id_ << ", handle heartbeat" << std::endl;
       HandleHearbeat(m);
       break;
     }

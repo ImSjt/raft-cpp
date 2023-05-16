@@ -40,8 +40,30 @@ const char* const kErrStepLocalMsg = "raft: cannot step raft local message";
 // but there is no peer found in raft.prs for that node.
 const char* const kErrStepPeerNotFound = "raft: cannot step as peer not found";
 
+// BasicStatus contains basic information about the Raft peer. It does not allocate.
+struct NodeBasicStatus {
+  uint64_t id;
+  raftpb::HardState hard_state;
+  SoftState soft_state;
+  uint64_t applied;
+  uint64_t lead_transferee;
+};
+
+// Status contains information about this Raft peer and its view of the system.
+// The Progress is only populated on the leader.
+struct NodeStatus {
+  NodeBasicStatus basic;
+  ProgressTracker::Config config;
+  ProgressMap progress;
+};
+
+struct Peer {
+  uint64_t id;
+  std::string context;
+};
+
 class RawNode {
- public:
+ public: 
   using Visitor = std::function<void(uint64_t id, ProgressType type, ProgressPtr pr)>;
 
   static std::unique_ptr<RawNode> New(Raft::Config& c);
@@ -49,10 +71,25 @@ class RawNode {
     return New(c);
   }
 
+  static std::unique_ptr<RawNode> Start(Raft::Config& c, std::vector<Peer> peers) {
+    auto node = New(c);
+    node->Bootstrap(peers);
+    return std::move(node);
+  }
+
   RawNode(std::unique_ptr<Raft>&& raft) : raft_(std::move(raft)) {
     prev_soft_st_ = raft_->GetSoftState();
     prev_hard_st_ = raft_->GetHardState();
   }
+
+  // Bootstrap initializes the RawNode for first use by appending configuration
+  // changes for the supplied peers. This method returns an error if the Storage
+  // is nonempty.
+  //
+  // It is recommended that instead of calling this method, applications bootstrap
+  // their state manually by setting up a Storage that has a first index > 1 and
+  // which stores the desired ConfState as its InitialState.
+  Status Bootstrap(std::vector<Peer> peers);
 
   // Tick advances the internal logical clock by a single tick.
   void Tick();
@@ -108,13 +145,13 @@ class RawNode {
   // last Ready results.
   void Advance(const Ready& rd);
 
-  // // GetStatus returns the current status of the given group. This allocates, see
-  // // BasicStatus and WithProgress for allocation-friendlier choices.
-  // Status GetStatus() const;
+  // GetStatus returns the current status of the given group. This allocates, see
+  // BasicStatus and WithProgress for allocation-friendlier choices.
+  NodeStatus GetStatus() const;
 
-  // // BasicStatus returns a BasicStatus. Notably this does not contain the
-  // // Progress map; see WithProgress for an allocation-free way to inspect it.
-  // BasicStatus GetBasicStatus() const;
+  // BasicStatus returns a BasicStatus. Notably this does not contain the
+  // Progress map; see WithProgress for an allocation-free way to inspect it.
+  NodeBasicStatus GetBasicStatus() const;
 
   // WithProgress is a helper to introspect the Progress for this node and its
   // peers.

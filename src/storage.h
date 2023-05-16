@@ -141,8 +141,11 @@ class MemoryStorage : public Storage {
 
   void SetEntries(const EntryPtrs& ents) { ents_ = ents; }
   const EntryPtrs& GetEntries() const { return ents_; }
+  EntryPtr GetEntry(size_t i) { return ents_[i]; }
 
   SnapshotPtr GetSnapshot() { return snapshot_; }
+
+  void SetIgnoreSize(bool v) { ignore_size_ = v; }
 
  private:
   uint64_t LastIndexUnSafe() const;
@@ -156,6 +159,9 @@ class MemoryStorage : public Storage {
   SnapshotPtr snapshot_;
   // ents[i] has raft log position i+snapshot.Metadata.Index
   EntryPtrs ents_;
+
+  // for test
+  bool ignore_size_;
 };
 
 }  // namespace craft

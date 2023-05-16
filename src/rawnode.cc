@@ -56,6 +56,63 @@ std::unique_ptr<RawNode> RawNode::New(Raft::Config& c) {
   return std::move(rn);
 }
 
+Status RawNode::Bootstrap(std::vector<Peer> peers) {
+  if (peers.empty()) {
+    return Status::Error("must provide at least one peer to Bootstrap");
+  }
+  auto [last_index, s] = raft_->GetRaftLog()->GetStorage()->LastIndex();
+  if (!s.IsOK()) {
+    return s;
+  }
+
+	// We've faked out initial entries above, but nothing has been
+	// persisted. Start with an empty HardState (thus the first Ready will
+	// emit a HardState update for the app to persist).
+  prev_hard_st_.Clear();
+
+	// TODO(tbg): remove StartNode and give the application the right tools to
+	// bootstrap the initial membership in a cleaner way.
+  raft_->BecomeFollower(1, Raft::kNone);
+
+  craft::EntryPtrs ents;
+  for (size_t i = 0; i < peers.size(); i++) {
+    const auto& peer = peers[i];
+    raftpb::ConfChange cc;
+    cc.set_type(raftpb::ConfChangeType::ConfChangeAddNode);
+    cc.set_node_id(peer.id);
+    cc.set_context(peer.context);
+    auto data = cc.SerializeAsString();
+    auto ent = std::make_shared<raftpb::Entry>();
+    ent->set_type(raftpb::EntryType::EntryConfChange);
+    ent->set_term(1);
+    ent->set_index(static_cast<uint64_t>(i+1));
+    ent->set_data(std::move(data));
+    ents.emplace_back(ent);
+  }
+  raft_->GetRaftLog()->Append(ents);
+
+	// Now apply them, mainly so that the application can call Campaign
+	// immediately after StartNode in tests. Note that these nodes will
+	// be added to raft twice: here and when the application's Ready
+	// loop calls ApplyConfChange. The calls to addNode must come after
+	// all calls to raftLog.append so progress.next is set after these
+	// bootstrapping entries (it is an error if we try to append these
+	// entries since they have already been committed).
+	// We do not set raftLog.applied so the application will be able
+	// to observe all conf changes via Ready.CommittedEntries.
+	//
+	// TODO(bdarnell): These entries are still unstable; do we need to preserve
+	// the invariant that committed < unstable?
+  raft_->GetRaftLog()->SetCommitted(static_cast<uint64_t>(ents.size()));
+  for (const auto& peer : peers) {
+    raftpb::ConfChange cc;
+    cc.set_node_id(peer.id);
+    cc.set_type(raftpb::ConfChangeAddNode);
+    raft_->ApplyConfChange(ConfChangeI(std::move(cc)).AsV2());
+  }
+  return Status::OK();
+}
+
 void RawNode::Tick() {
   raft_->Tick();
 }
@@ -177,13 +234,27 @@ void RawNode::Advance(const Ready& rd) {
   raft_->Advance(rd);
 }
 
-// // GetStatus returns the current status of the given group. This allocates, see
-// // BasicStatus and WithProgress for allocation-friendlier choices.
-// Status GetStatus() const;
+NodeStatus RawNode::GetStatus() const {
+  NodeStatus s;
+  s.basic = GetBasicStatus();
+  if (s.basic.soft_state.raft_state == RaftStateType::kLeader) {
+    for (auto& p : raft_->GetTracker().GetProgressMap()) {
+      s.progress[p.first] = p.second->Clone();
+    }
+  }
+  s.config = raft_->GetTracker().GetConfig();
+  return s;
+}
 
-// // BasicStatus returns a BasicStatus. Notably this does not contain the
-// // Progress map; see WithProgress for an allocation-free way to inspect it.
-// BasicStatus GetBasicStatus() const;
+NodeBasicStatus RawNode::GetBasicStatus() const {
+  NodeBasicStatus s;
+  s.id = raft_->ID();
+  s.lead_transferee = raft_->LeadTransferee();
+  s.hard_state = raft_->GetHardState();
+  s.soft_state = raft_->GetSoftState();
+  s.applied = raft_->GetRaftLog()->Applied();
+  return s;
+}
 
 void RawNode::WithProgress(Visitor&& visitor) {
   raft_->GetTracker().Visit([visitor = std::move(visitor)](uint64_t id, ProgressPtr& pr) {

@@ -420,7 +420,408 @@ TEST(RawNode, RawNodeProposeAddDuplicateNode) {
 // TestRawNodeReadIndex ensures that Rawnode.ReadIndex sends the MsgReadIndex message
 // to the underlying raft. It also ensures that ReadState can be read out.
 TEST(RawNode, ReadIndex) {
+  craft::MsgPtrs msgs;
+  auto append_step = [&msgs](craft::MsgPtr m) {
+    msgs.push_back(m);
+    return craft::Status::OK();
+  };
+  std::deque<craft::ReadState> wrs = {
+    {1, "somedata"},
+  };
 
+  auto s = newTestMemoryStorage({withPeers({1})});
+  auto c = newTestConfig(1, 10, 1, s);
+  auto rawnode = craft::RawNode::New(c);
+  rawnode->GetRaft()->SetReadStates(wrs);
+  // ensure the ReadStates can be read out
+  bool has_ready = rawnode->HasReady();
+  ASSERT_TRUE(has_ready);
+
+  auto rd = rawnode->GetReady();
+  ASSERT_EQ(rd.read_states, wrs);
+  s->Append(rd.entries);
+  rawnode->Advance(rd);
+  // ensure raft.readStates is reset after advance
+  ASSERT_EQ(rawnode->GetRaft()->GetReadStates().size(), 0);
+
+  std::string wrequest_ctx = "somedata2";
+  rawnode->Campaign();
+  while (1) {
+    rd = rawnode->GetReady();
+    s->Append(rd.entries);
+
+    if (rd.soft_state->lead == rawnode->GetRaft()->ID()) {
+      rawnode->Advance(rd);
+
+      // Once we are the leader, issue a ReadIndex request
+      rawnode->GetRaft()->SetStep(append_step);
+      rawnode->ReadIndex(wrequest_ctx);
+      break;
+    }
+    rawnode->Advance(rd);
+  }
+  // ensure that MsgReadIndex message is sent to the underlying raft
+  ASSERT_EQ(msgs.size(), 1);
+  ASSERT_EQ(msgs[0]->type(), raftpb::MessageType::MsgReadIndex);
+  ASSERT_EQ(msgs[0]->entries(0).data(), wrequest_ctx);
+}
+
+static void readyEqual(const craft::Ready& readya, const craft::Ready& readyb) {
+  ASSERT_EQ(readya.soft_state, readyb.soft_state);
+
+  ASSERT_EQ(readya.hard_state.term(), readyb.hard_state.term());
+  ASSERT_EQ(readya.hard_state.vote(), readyb.hard_state.vote());
+  ASSERT_EQ(readya.hard_state.commit(), readyb.hard_state.commit());
+
+  ASSERT_EQ(readya.read_states, readyb.read_states);
+
+  ASSERT_EQ(readya.entries.size(), readyb.entries.size());
+
+  ASSERT_EQ(readya.committed_entries.size(), readyb.committed_entries.size());
+
+  ASSERT_EQ(readya.messages.size(), readyb.messages.size());
+
+  ASSERT_EQ(readya.must_sync, readyb.must_sync);
+}
+
+// TestBlockProposal from node_test.go has no equivalent in rawNode because there is
+// no leader check in RawNode.
+
+// TestNodeTick from node_test.go has no equivalent in rawNode because
+// it reaches into the raft object which is not exposed.
+
+// TestNodeStop from node_test.go has no equivalent in rawNode because there is
+// no goroutine in RawNode.
+
+// TestRawNodeStart ensures that a node can be started correctly. Note that RawNode
+// requires the application to bootstrap the state, i.e. it does not accept peers
+// and will not create faux configuration change entries.
+TEST(RawNode, Start) {
+  craft::Ready want;
+  want.soft_state = craft::SoftState{1, craft::RaftStateType::kLeader};
+  raftpb::HardState hs;
+  hs.set_term(1);
+  hs.set_commit(3);
+  hs.set_vote(1);
+  want.hard_state = hs;
+  want.entries = {
+    NEW_ENT().Term(1).Index(2)(),
+    NEW_ENT().Term(1).Index(3).Data("foo")()
+  };
+  want.committed_entries = {
+    NEW_ENT().Term(1).Index(2)(),
+    NEW_ENT().Term(1).Index(3).Data("foo")()
+  };
+  want.must_sync = true;
+
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  storage->GetEntry(0)->set_index(1);
+
+	// TODO(tbg): this is a first prototype of what bootstrapping could look
+	// like (without the annoying faux ConfChanges). We want to persist a
+	// ConfState at some index and make sure that this index can't be reached
+	// from log position 1, so that followers are forced to pick up the
+	// ConfState in order to move away from log position 1 (unless they got
+	// bootstrapped in the same way already). Failing to do so would mean that
+	// followers diverge from the bootstrapped nodes and don't learn about the
+	// initial config.
+	//
+	// NB: this is exactly what CockroachDB does. The Raft log really begins at
+	// index 10, so empty followers (at index 1) always need a snapshot first.
+  auto bootstrap = [](std::shared_ptr<craft::MemoryStorage> storage, raftpb::ConfState cs) {
+    if (cs.voters_size() == 0) {
+      return craft::Status::Error("no voters specified");
+    }
+    auto [fi, s1] = storage->FirstIndex();
+    if (!s1.IsOK()) {
+      return s1;
+    }
+    if (fi < 2) {
+      return craft::Status::Error("FirstIndex >= 2 is prerequisite for bootstrap");
+    }
+    std::tie(std::ignore, s1) = storage->Entries(fi, fi, craft::Raft::kNoLimit);
+    if (s1.IsOK()) {
+      return craft::Status::Error("should not have been able to load first index");
+    }
+
+    auto [li, s2] = storage->LastIndex();
+    if (!s2.IsOK()) {
+      return s2;
+    }
+    std::tie(std::ignore, s2) = storage->Entries(li, li, craft::Raft::kNoLimit);
+    if (s2.IsOK()) {
+      return craft::Status::Error("should not have been able to load last index");
+    }
+    auto [hs, ics, s3] = storage->InitialState();
+    if (!s3.IsOK()) {
+      return s3;
+    }
+    if (!craft::IsEmptyHardState(hs)) {
+      return craft::Status::Error("HardState not empty");
+    }
+    if (ics.voters_size() != 0) {
+      return craft::Status::Error("ConfState not empty");
+    }
+
+    auto snap = std::make_shared<raftpb::Snapshot>();
+    snap->mutable_metadata()->set_index(1);
+    snap->mutable_metadata()->set_term(1);
+    *snap->mutable_metadata()->mutable_conf_state() = cs;
+    return storage->ApplySnapshot(snap);
+  };
+
+  auto status = bootstrap(storage, *NEW_CONF_STATE().Voters({1})());
+  ASSERT_TRUE(status.IsOK());
+
+  auto rawnode = craft::RawNode::New(newTestConfig(1, 10, 1, storage));
+  ASSERT_FALSE(rawnode->HasReady());
+  rawnode->Campaign();
+  rawnode->Propose("foo");
+  ASSERT_TRUE(rawnode->HasReady());
+
+  auto rd = rawnode->GetReady();
+  storage->Append(rd.entries);
+  rawnode->Advance(rd);
+
+  rd.soft_state.reset();
+  want.soft_state.reset();
+
+  readyEqual(rd, want);
+  ASSERT_FALSE(rawnode->HasReady());
+}
+
+TEST(RawNode, Restart) {
+  craft::EntryPtrs entries = {
+    NEW_ENT().Term(1).Index(1)(),
+    NEW_ENT().Term(1).Index(2).Data("foo")(),
+  };
+  raftpb::HardState st;
+  st.set_term(1);
+  st.set_commit(1);
+
+  craft::Ready want = {
+    // commit up to commit index in st
+    .committed_entries = {NEW_ENT().Term(1).Index(1)()},
+    .must_sync = false,
+  };
+
+  auto storage = newTestMemoryStorage({withPeers({1})});
+  storage->SetHardState(st);
+  storage->Append(entries);
+  auto rawnode = craft::RawNode::New(newTestConfig(1, 10, 1, storage));
+  auto rd = rawnode->GetReady();
+  readyEqual(rd, want);
+  rawnode->Advance(rd);
+  ASSERT_FALSE(rawnode->HasReady());
+}
+
+TEST(RawNode, RestartFromSnapshot) {
+  auto snap = std::make_shared<raftpb::Snapshot>();
+  snap->mutable_metadata()->set_index(2);
+  snap->mutable_metadata()->set_term(1);
+  snap->mutable_metadata()->mutable_conf_state()->add_voters(1);
+  snap->mutable_metadata()->mutable_conf_state()->add_voters(2);
+  craft::EntryPtrs entries = {
+    NEW_ENT().Term(1).Index(3).Data("foo")(),
+  };
+  raftpb::HardState st;
+  st.set_term(1);
+  st.set_commit(3);
+
+  craft::Ready want = {
+    // commit up to commit index in st
+    .committed_entries = entries,
+    .must_sync = false,
+  };
+
+  auto s = std::make_shared<craft::MemoryStorage>();
+  s->SetHardState(st);
+  s->ApplySnapshot(snap);
+  s->Append(entries);
+  auto rawnode = craft::RawNode::New(newTestConfig(1, 10, 1, s));
+  auto rd = rawnode->GetReady();
+  readyEqual(rd, want);
+  rawnode->Advance(rd);
+  ASSERT_FALSE(rawnode->HasReady());
+}
+
+// TestNodeAdvance from node_test.go has no equivalent in rawNode because there is
+// no dependency check between Ready() and Advance()
+TEST(RawNode, NodeStatus) {
+  auto s = newTestMemoryStorage({withPeers({1})});
+  auto rn = craft::RawNode::New(newTestConfig(1, 10, 1, s));
+  auto status = rn->GetStatus();
+  ASSERT_EQ(status.progress.empty(), true);
+
+  auto s1 = rn->Campaign();
+  ASSERT_TRUE(s1.IsOK());
+  status = rn->GetStatus();
+  ASSERT_EQ(status.basic.soft_state.lead, 1);
+  ASSERT_EQ(status.basic.soft_state.raft_state, craft::RaftStateType::kLeader);
+  auto exp = rn->GetRaft()->GetTracker().GetProgress(1);
+  auto act = status.progress[1];
+  ASSERT_EQ(exp->String(), act->String());
+
+  craft::ProgressTracker::Config exp_cfg;
+  exp_cfg.voters_.Incoming().Add(1);
+  ASSERT_EQ(status.config, exp_cfg);
+}
+
+// TestRawNodeCommitPaginationAfterRestart is the RawNode version of
+// TestNodeCommitPaginationAfterRestart. The anomaly here was even worse as the
+// Raft group would forget to apply entries:
+//
+// - node learns that index 11 is committed
+// - nextEnts returns index 1..10 in CommittedEntries (but index 10 already
+//   exceeds maxBytes), which isn't noticed internally by Raft
+// - Commit index gets bumped to 10
+// - the node persists the HardState, but crashes before applying the entries
+// - upon restart, the storage returns the same entries, but `slice` takes a
+//   different code path and removes the last entry.
+// - Raft does not emit a HardState, but when the app calls Advance(), it bumps
+//   its internal applied index cursor to 10 (when it should be 9)
+// - the next Ready asks the app to apply index 11 (omitting index 10), losing a
+//    write.
+TEST(RawNode, CommitPaginationAfterRestart) {
+  auto s = newTestMemoryStorage({withPeers({1})});
+  s->SetIgnoreSize(true);
+
+  raftpb::HardState persisted_hardState;
+  persisted_hardState.set_term(1);
+  persisted_hardState.set_vote(1);
+  persisted_hardState.set_commit(10);
+
+  s->SetHardState(persisted_hardState);
+  craft::EntryPtrs ents;
+  size_t size;
+  for (size_t i = 0; i < 10; i++) {
+    auto ent = NEW_ENT().Term(1).Index(i + 1).Type(raftpb::EntryType::EntryNormal).Data("a")();
+    ents.push_back(ent);
+    size += ent->ByteSizeLong();
+  }
+  s->SetEntries(ents);
+
+  auto cfg = newTestConfig(1, 10, 1, s);
+	// Set a MaxSizePerMsg that would suggest to Raft that the last committed entry should
+	// not be included in the initial rd.CommittedEntries. However, our storage will ignore
+	// this and *will* return it (which is how the Commit index ended up being 10 initially).
+  cfg.max_size_per_msg = size - (*ents.rbegin())->ByteSizeLong() - 1;
+  ents.push_back(NEW_ENT().Term(1).Index(11).Type(raftpb::EntryType::EntryNormal).Data("boom")());
+  s->SetEntries(ents);
+
+  auto rawnode = craft::RawNode::New(cfg);
+  for (uint64_t highest_applied = 0; highest_applied != 11;) {
+    auto rd = rawnode->GetReady();
+    auto n = rd.committed_entries.size();
+    ASSERT_NE(n, 0);
+    auto next = rd.committed_entries[0]->index();
+    ASSERT_FALSE(highest_applied != 0 && highest_applied + 1 != next);
+    highest_applied = rd.committed_entries[n-1]->index();
+    rawnode->Advance(rd);
+    rawnode->Step(NEW_MSG()
+                  .Type(raftpb::MessageType::MsgHeartbeat)
+                  .To(1)
+                  .From(1)
+                  .Term(1)  // illegal, but we get away with it
+                  .Commit(11)());
+  }
+}
+
+// TestRawNodeBoundedLogGrowthWithPartition tests a scenario where a leader is
+// partitioned from a quorum of nodes. It verifies that the leader's log is
+// protected from unbounded growth even as new entries continue to be proposed.
+// This protection is provided by the MaxUncommittedEntriesSize configuration.
+TEST(RawNode, BoundedLogGrowthWithPartition) {
+  size_t max_entries = 16;
+  std::string data = "testdata";
+  auto test_entry = NEW_ENT().Data(data)();
+  uint64_t max_entry_size = max_entries * craft::Util::PayloadSize(test_entry);
+
+  auto s = newTestMemoryStorage({withPeers({1})});
+  auto cfg = newTestConfig(1, 10, 1, s);
+  cfg.max_uncommitted_entries_size = max_entry_size;
+  auto rawnode = craft::RawNode::New(cfg);
+  auto rd = rawnode->GetReady();
+  s->Append(rd.entries);
+  rawnode->Advance(rd);
+
+  // Become the leader.
+  rawnode->Campaign();
+  while (1) {
+    rd = rawnode->GetReady();
+    s->Append(rd.entries);
+    if (rd.soft_state->lead == rawnode->GetRaft()->ID()) {
+      rawnode->Advance(rd);
+      break;
+    }
+    rawnode->Advance(rd);
+  }
+
+	// Simulate a network partition while we make our proposals by never
+	// committing anything. These proposals should not cause the leader's
+	// log to grow indefinitely.
+  for (size_t i = 0; i < 1024; i++) {
+    rawnode->Propose(data);
+  }
+
+	// Check the size of leader's uncommitted log tail. It should not exceed the
+	// MaxUncommittedEntriesSize limit.
+  auto check_uncommitted = [&rawnode](uint64_t exp) {
+    ASSERT_EQ(rawnode->GetRaft()->UncommittedSize(), exp);
+  };
+  check_uncommitted(max_entry_size);
+
+	// Recover from the partition. The uncommitted tail of the Raft log should
+	// disappear as entries are committed.
+  rd = rawnode->GetReady();
+  ASSERT_EQ(rd.committed_entries.size(), max_entries);
+  s->Append(rd.entries);
+  rawnode->Advance(rd);
+  check_uncommitted(0);
+}
+
+static void msgsEqual(craft::MsgPtrs msgs1, craft::MsgPtrs msgs2) {
+  ASSERT_EQ(msgs1.size(), msgs2.size());
+  for (size_t i = 0; i < msgs1.size(); i++) {
+    auto msg1 = msgs1[i];
+    auto msg2 = msgs2[i];
+    ASSERT_EQ(msg1->from(), msg2->from());
+    ASSERT_EQ(msg1->to(), msg2->to());
+    ASSERT_EQ(msg1->type(), msg2->type());
+    ASSERT_EQ(msg1->term(), msg2->term());
+    ASSERT_EQ(msg1->logterm(), msg2->logterm());
+    ASSERT_EQ(msg1->entries_size(), msg2->entries_size());
+  }
+}
+
+TEST(RawNode, ConsumeReady) {
+	// Check that readyWithoutAccept() does not call acceptReady (which resets
+	// the messages) but Ready() does.
+  auto s = newTestMemoryStorage({withPeers({1})});
+  auto rn = craft::RawNode::New(newTestConfig(1, 3, 1, s));
+  auto m1 = NEW_MSG().Context("foo")();
+  auto m2 = NEW_MSG().Context("bar")();
+
+  // Inject first message, make sure it's visible via readyWithoutAccept.
+  rn->GetRaft()->GetMsgsForTest().push_back(m1);
+  auto rd = rn->ReadyWithoutAccept();
+  ASSERT_EQ(rd.messages.size(), 1);
+  ASSERT_EQ(rd.messages[0]->context(), m1->context());
+
+  ASSERT_EQ(rn->GetRaft()->Msgs().size(), 1);
+  ASSERT_EQ(rn->GetRaft()->Msgs()[0]->context(), m1->context());
+
+	// Now call Ready() which should move the message into the Ready (as opposed
+	// to leaving it in both places).
+  rd = rn->GetReady();
+  ASSERT_EQ(rn->GetRaft()->Msgs().size(), 0);
+  ASSERT_EQ(rd.messages.size(), 1);
+  ASSERT_EQ(rd.messages[0]->context(), m1->context());
+  // Add a message to raft to make sure that Advance() doesn't drop it.
+  rn->GetRaft()->GetMsgsForTest().push_back(m2);
+  rn->Advance(rd);
+  ASSERT_EQ(rn->GetRaft()->Msgs().size(), 1);
+  ASSERT_EQ(rn->GetRaft()->Msgs()[0]->context(), m2->context());
 }
 
 int main(int argc, char** argv) {

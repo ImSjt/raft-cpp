@@ -158,6 +158,8 @@ class RaftLog {
   const Unstable& GetUnstable() const { return unstable_; }
   Unstable& GetUnstable() { return unstable_; }
 
+  std::shared_ptr<Storage> GetStorage() { return storage_; }
+
  private:
   // storage_ contains all stable entries since the last snapshot.
   std::shared_ptr<Storage> storage_;

@@ -50,6 +50,10 @@ enum CampaignType {
 struct SoftState {
   uint64_t lead = 0;
   RaftStateType raft_state = RaftStateType::kFollower;
+
+  bool operator==(const SoftState& other) const {
+    return lead == other.lead && raft_state == other.raft_state;
+  }
 };
 
 // Ready encapsulates the entries and messages that are ready to read,
@@ -377,12 +381,12 @@ class Raft {
   uint64_t ID() const { return id_; }
   void SetID(uint64_t id) { id_ = id; }
 
-  std::deque<MsgPtr> Msgs() const { return msgs_; }
+  const MsgPtrs& Msgs() const { return msgs_; }
+  void ClearMsgs() { msgs_.clear(); }
 
   const std::deque<ReadState>& GetReadStates() const { return read_states_; }
+  void SetReadStates(std::deque<ReadState> read_states) { read_states_ = read_states; }
   void ClearReadStates() { read_states_.clear(); }
-
-  void ClearMsgs() { msgs_.clear(); }
 
   // for test
   MsgPtrs ReadAndClearMsgs() {
@@ -390,6 +394,7 @@ class Raft {
     ClearMsgs();
     return ms;
   }
+  MsgPtrs& GetMsgsForTest() { return msgs_; }
 
   uint64_t PendingConfIndex() const { return pending_conf_index_; }
 
@@ -453,7 +458,7 @@ class Raft {
   // is_learner_ is true if the local raft node is a learner.
   bool is_learner_;
 
-  std::deque<MsgPtr> msgs_;
+  MsgPtrs msgs_;
 
   // the leader id
   uint64_t lead_;

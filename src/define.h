@@ -22,7 +22,6 @@
 namespace craft {
 
 using EntryPtr = std::shared_ptr<raftpb::Entry>;
-// using EntryPtrs = std::vector<EntryPtr>;
 using EntryPtrs = std::deque<EntryPtr>;
 
 using SnapshotPtr = std::shared_ptr<raftpb::Snapshot>;

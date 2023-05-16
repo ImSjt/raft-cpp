@@ -32,6 +32,8 @@ MemoryStorage::MemoryStorage() {
   ents_.emplace_back(std::make_shared<raftpb::Entry>(std::move(entry)));
 
   snapshot_ = std::make_shared<raftpb::Snapshot>();
+
+  ignore_size_ = false;
 }
 
 std::tuple<raftpb::HardState, raftpb::ConfState, Status>
@@ -47,6 +49,10 @@ Status MemoryStorage::SetHardState(const raftpb::HardState& st) {
 
 std::tuple<EntryPtrs, Status>
 MemoryStorage::Entries(uint64_t lo, uint64_t hi, uint64_t max_size) {
+  if (ignore_size_) {
+    max_size = UINT64_MAX;
+  }
+
   std::shared_lock<std::shared_mutex> guard(mutex_);
 
   assert(!ents_.empty());
