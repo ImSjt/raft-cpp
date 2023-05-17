@@ -22,6 +22,9 @@ set(WITH_UNWIND OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/glog)
 include_directories(${CMAKE_SOURCE_DIR}/src/thirdparty/glog/src)
 
+add_subdirectory(third_party/concurrentqueue)
+include_directories(${CMAKE_SOURCE_DIR}/third_party/concurrentqueue)
+
 include(FindProtobuf)
 find_package(Protobuf REQUIRED)
 get_filename_component(PROTO_LIB_DIR ${PROTOBUF_LIBRARY} DIRECTORY)
@@ -113,7 +116,7 @@ target_link_libraries (craft glog::glog)
 # target_link_libraries(test_bug craft)
 
 add_executable(single_mem_node example/single_mem_node.cc)
-target_link_libraries(single_mem_node craft)
+target_link_libraries(single_mem_node craft concurrentqueue)
 
 function(craft_test test_file)
     get_filename_component(test_target_name "${test_file}" NAME_WE)

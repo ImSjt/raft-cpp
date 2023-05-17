@@ -74,7 +74,8 @@ class RawNode {
   static std::unique_ptr<RawNode> Start(Raft::Config& c, std::vector<Peer> peers) {
     auto node = New(c);
     node->Bootstrap(peers);
-    return std::move(node);
+    // return std::move(node);
+    return node;
   }
 
   RawNode(std::unique_ptr<Raft>&& raft) : raft_(std::move(raft)) {

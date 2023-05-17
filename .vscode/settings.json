@@ -73,6 +73,14 @@
         "shared_mutex": "cpp",
         "ranges": "cpp",
         "strstream": "cpp",
-        "storage_test": "cpp"
+        "storage_test": "cpp",
+        "complex": "cpp",
+        "cfenv": "cpp",
+        "codecvt": "cpp",
+        "csetjmp": "cpp",
+        "csignal": "cpp",
+        "future": "cpp",
+        "scoped_allocator": "cpp",
+        "valarray": "cpp"
     }
 }

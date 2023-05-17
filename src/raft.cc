@@ -70,7 +70,7 @@ bool IsEmptyHardState(const raftpb::HardState& st) {
          st.commit() == empty_state.commit();
 }
 
-static bool IsEmptySnap(const SnapshotPtr& sp) {
+bool IsEmptySnap(const SnapshotPtr& sp) {
   return sp == nullptr || sp->metadata().index() == 0;
 }
 
@@ -95,6 +95,75 @@ uint64_t Ready::AppliedCursor() const {
     return index;
   }
   return 0;
+}
+
+std::string Ready::String() const {
+  std::stringstream ss;
+  if (soft_state) {
+    ss << "soft_state raft_state=" << RaftStateTypeName(soft_state->raft_state) << " lead=" << soft_state->lead << std::endl;
+  }
+
+  ss << "hard_state commit=" << hard_state.commit() << " vote=" << hard_state.vote() << " term=" << hard_state.term() << std::endl;
+
+  if (!read_states.empty()) {
+    ss << "read_states";
+    for (auto& read_state : read_states) {
+      ss << " [index=" << read_state.index << " context=" << read_state.request_ctx << "]";
+    }
+    ss << std::endl;
+  }
+
+  auto print_entry = [&ss](const raftpb::Entry& ent) {
+    ss << "entry term=" << ent.term() << " index=" << ent.index()
+        << " type=" << raftpb::EntryType_Name(ent.type())
+        << " data=" << ent.data() << std::endl;
+  };
+
+  if (!entries.empty()) {
+    ss << "entries" << std::endl;
+    for (auto& entry : entries) {
+      print_entry(*entry);
+    }
+  }
+
+  auto print_vec = [&ss](const ::google::protobuf::RepeatedField< ::google::protobuf::uint64 >& vec, std::string name) {
+    ss << name << "[";
+    for (auto v : vec) {
+      ss << " " << v;
+    }
+    ss << "]" << std::endl;
+  };
+
+  if (!snapshot) {
+    ss << "snapshot index=" << snapshot->metadata().index() << " term=" << snapshot->metadata().term() << std::endl;
+    print_vec(snapshot->metadata().conf_state().voters(), "voters");
+    print_vec(snapshot->metadata().conf_state().learners(), "learners");
+    print_vec(snapshot->metadata().conf_state().voters_outgoing(), "voters_outgoing");
+    print_vec(snapshot->metadata().conf_state().learners_next(), "learners_next");
+    ss << "auto_leave=" << snapshot->metadata().conf_state().auto_leave() << std::endl;
+  }
+
+  if (!committed_entries.empty()) {
+    ss << "comitted_entries" << std::endl;
+    for (auto& entry : committed_entries) {
+      print_entry(*entry);
+    }
+  }
+
+  if (!messages.empty()) {
+    ss << "messages" << std::endl;
+    for (auto& msg : messages) {
+      ss << "message type=" << raftpb::MessageType_Name(msg->type())
+         << " to=" << msg->to() << " from=" << msg->from()
+         << " term=" << msg->term() << " logterm=" << msg->logterm()
+         << " index=" << msg->index() << " commit=" << msg->commit()
+         << " reject=" << msg->reject() << " reject_hint=" << msg->rejecthint() << std::endl;
+    }
+  }
+
+  ss << "must_sync=" << must_sync << std::endl;
+
+  return ss.str();
 }
 
 Status Raft::Config::Validate() {

@@ -102,6 +102,8 @@ struct Ready {
   // applied (once the Ready is confirmed via Advance). If no information is
   // contained in the Ready, returns zero.
   uint64_t AppliedCursor() const;
+
+  std::string String() const;
 };
 
 const std::string& RaftStateTypeName(RaftStateType t);
@@ -112,6 +114,7 @@ const std::string& CampaignTypeName(CampaignType t);
 const char* const kErrProposalDropped = "raft proposal dropped";
 
 bool IsEmptyHardState(const raftpb::HardState& st);
+bool IsEmptySnap(const SnapshotPtr& sp);
 
 class Raft {
  public:
