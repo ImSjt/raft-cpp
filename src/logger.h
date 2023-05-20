@@ -2,6 +2,7 @@
 #define __CRAFT_COMMON_LOGGER_H__
 #include <cstdint>
 #include <functional>
+#include <cinttypes>
 
 #include "singleton.h"
 #include "fixed_buffer.h"

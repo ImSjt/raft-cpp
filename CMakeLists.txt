@@ -115,8 +115,11 @@ target_link_libraries (craft glog::glog)
 # add_executable(test_bug "src/raft/main.cc")
 # target_link_libraries(test_bug craft)
 
-add_executable(single_mem_node example/single_mem_node.cc)
-target_link_libraries(single_mem_node craft concurrentqueue)
+# add_executable(single_mem_node example/single_mem_node.cc)
+# target_link_libraries(single_mem_node craft concurrentqueue)
+
+add_executable(multi_mem_node example/multi_mem_node.cc)
+target_link_libraries(multi_mem_node craft concurrentqueue)
 
 function(craft_test test_file)
     get_filename_component(test_target_name "${test_file}" NAME_WE)

@@ -74,17 +74,6 @@ bool IsEmptySnap(const SnapshotPtr& sp) {
   return sp == nullptr || sp->metadata().index() == 0;
 }
 
-static int64_t NumOfPendingConf(const EntryPtrs& ents) {
-  int64_t n = 0;
-  for (auto& ent : ents) {
-    if (ent->type() == raftpb::EntryType::EntryConfChange ||
-        ent->type() == raftpb::EntryType::EntryConfChangeV2) {
-      n++;
-    }
-  }
-  return n;
-}
-
 uint64_t Ready::AppliedCursor() const {
   auto n = committed_entries.size();
   if (n > 0) {
@@ -249,31 +238,37 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
     nodes_str += std::to_string(voter_nodes[i]);
   }
   LOG_INFO(
-      "new raft %llu [peers: [%s], term: %llu, commit: %llu, applied: %llu, "
-      "lastindex: %llu, lastterm: %llu]",
+      "new raft %" PRIu64 " [peers: [%s], term: %" PRIu64 ", commit: %" PRIu64 ", applied: %" PRIu64 ", "
+      "lastindex: %" PRIu64 ", lastterm: %" PRIu64 "]",
       r->ID(), nodes_str.c_str(), r->Term(), r->GetRaftLog()->Committed(),
       r->GetRaftLog()->Applied(), r->GetRaftLog()->LastIndex(),
       r->GetRaftLog()->LastTerm());
 
-  return std::move(r);
+  return r;
 }
 
 Raft::Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log)
     : id_(c.id),
       term_(0),
       vote_(kNone),
-      lead_(kNone),
-      is_learner_(false),
       raft_log_(std::move(raft_log)),
       max_msg_size_(c.max_size_per_msg),
       max_uncommitted_size_(c.max_uncommitted_entries_size),
       trk_(c.max_inflight_msgs),
       state_(craft::RaftStateType::kFollower),
-      election_timeout_(c.election_tick),
-      heartbeat_timeout_(c.heartbeat_tick),
+      is_learner_(false),
+      lead_(kNone),
+      lead_transferee_(kNone),
+      pending_conf_index_(0),
+      uncommitted_size_(0),
+      read_only_(std::make_unique<ReadOnly>(c.read_only_option)),
+      election_elapsed_(0),
+      heartbeat_elapsed_(0),
       check_quorum_(c.check_quorum),
       pre_vote_(c.pre_vote),
-      read_only_(std::make_unique<ReadOnly>(c.read_only_option)),
+      heartbeat_timeout_(c.heartbeat_tick),
+      election_timeout_(c.election_tick),
+      randomized_election_timeout_(0),
       disable_proposal_forwarding_(c.disable_proposal_forwarding) {}
 
 void Raft::Send(MsgPtr m) {
@@ -595,7 +590,7 @@ void Raft::BecomeFollower(uint64_t term, uint64_t lead) {
   tick_ = std::bind(&Raft::TickElection, this);
   lead_ = lead;
   state_ = RaftStateType::kFollower;
-  LOG_INFO("%d became follower at term %d, vote %llu", id_, term_, vote_);
+  LOG_INFO("%d became follower at term %llu, vote %llu, lead %llu", id_, term_, vote_, lead_);
 }
 
 void Raft::BecomeCandidate() {
@@ -940,7 +935,7 @@ Status Raft::Step(MsgPtr m) {
   } else {
     auto status = step_(m);
     if (!status.IsOK()) {
-      return std::move(status);
+      return status;
     }
   }
   return Status::OK();
@@ -996,8 +991,7 @@ Status Raft::StepLeader(MsgPtr m) {
         return Status::Error(kErrProposalDropped);
       }
 
-      // TODO(JT): handle , double check
-      for (size_t i = 0; i < m->entries_size(); i++) {
+      for (int i = 0; i < m->entries_size(); i++) {
         auto& e = m->entries()[i];
         ConfChangeI cc;
         if (e.type() == raftpb::EntryType::EntryConfChange) {
@@ -1064,6 +1058,9 @@ Status Raft::StepLeader(MsgPtr m) {
       SendMsgReadIndexResponse(m);
 
       return Status::OK();
+    }
+    default: {
+      break;
     }
   }
 
@@ -1366,6 +1363,9 @@ Status Raft::StepLeader(MsgPtr m) {
       }
       break;
     }
+    default: {
+      break;
+    }
   }
   return Status::OK();
 }
@@ -1374,53 +1374,99 @@ Status Raft::StepCandidate(MsgPtr m) {
   // Only handle vote responses corresponding to our candidacy (while in
   // StateCandidate, we may get stale MsgPreVoteResp messages in this term from
   // our pre-candidate state).
-  switch (m->type()) {
-    case raftpb::MessageType::MsgProp: {
-      LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
-      return Status::Error(kErrProposalDropped);
-    }
-    case raftpb::MessageType::MsgApp: {
-      BecomeFollower(m->term(), m->from());  // always m.term == r.term
-      HandleAppendEntries(m);
-      return Status::OK();
-    }
-    case raftpb::MessageType::MsgHeartbeat: {
-      BecomeFollower(m->term(), m->from());  // always m.term == r.term
-      HandleHearbeat(m);
-      return Status::OK();
-    }
-    case raftpb::MessageType::MsgSnap: {
-      BecomeFollower(m->term(), m->from());  // always m.term == r.term
-      HandleSnapshot(m);
-      return Status::OK();
-    }
-    case raftpb::MessageType::MsgPreVoteResp:
-    case raftpb::MessageType::MsgVoteResp: {
-      auto [gr, rj, res] = Poll(m->from(), m->type(), !m->reject());
-      LOG_INFO("%llu has received %lld %s votes and %lld vote rejections", id_,
-               gr, raftpb::MessageType_Name(m->type()).c_str(), rj);
-      if (res == VoteState::kVoteWon) {
-        if (state_ == RaftStateType::kPreCandidate) {
-          Campaign(CampaignType::kElection);
-        } else {
-          BecomeLeader();
-          BcastAppend();
-        }
-      } else if (res == VoteState::kVoteLost) {
-        // pb.MsgPreVoteResp contains future term of pre-candidate
-        // m.Term > r.Term; reuse r.Term
-        BecomeFollower(term_, kNone);
+  raftpb::MessageType my_vote_resp_type;
+  if (state_ == RaftStateType::kPreCandidate) {
+    my_vote_resp_type = raftpb::MessageType::MsgPreVoteResp;
+  } else {
+    my_vote_resp_type = raftpb::MessageType::MsgVoteResp;
+  }
+
+  if (m->type() == raftpb::MessageType::MsgProp) {
+    LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
+    return Status::Error(kErrProposalDropped);
+  } else if (m->type() == raftpb::MessageType::MsgApp) {
+    BecomeFollower(m->term(), m->from());  // always m.term == r.term
+    HandleAppendEntries(m);
+    return Status::OK();
+  } else if (m->type() == raftpb::MessageType::MsgHeartbeat) {
+    BecomeFollower(m->term(), m->from());  // always m.term == r.term
+    HandleHearbeat(m);
+    return Status::OK();
+  } else if (m->type() == raftpb::MessageType::MsgSnap) {
+    BecomeFollower(m->term(), m->from());  // always m.term == r.term
+    HandleSnapshot(m);
+    return Status::OK();
+  } else if (m->type() == my_vote_resp_type) {
+    auto [gr, rj, res] = Poll(m->from(), m->type(), !m->reject());
+    LOG_INFO("%llu has received %lld %s votes and %lld vote rejections", id_,
+              gr, raftpb::MessageType_Name(m->type()).c_str(), rj);
+    if (res == VoteState::kVoteWon) {
+      if (state_ == RaftStateType::kPreCandidate) {
+        Campaign(CampaignType::kElection);
       } else {
-        // do nothing
+        BecomeLeader();
+        BcastAppend();
       }
-      return Status::OK();
+    } else if (res == VoteState::kVoteLost) {
+      // pb.MsgPreVoteResp contains future term of pre-candidate
+      // m.Term > r.Term; reuse r.Term
+      BecomeFollower(term_, kNone);
+    } else {
+      // do nothing
     }
-    case raftpb::MessageType::MsgTimeoutNow: {
+    return Status::OK();
+  } else if (m->type() == raftpb::MessageType::MsgTimeoutNow) {
       LOG_DEBUG("%llu [term %llu state %s] ignored MsgTimeoutNow from %llu",
                 id_, term_, RaftStateTypeName(state_).c_str(), m->from());
       return Status::OK();
-    }
   }
+
+  // switch (m->type()) {
+  //   case raftpb::MessageType::MsgProp: {
+  //     LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
+  //     return Status::Error(kErrProposalDropped);
+  //   }
+  //   case raftpb::MessageType::MsgApp: {
+  //     BecomeFollower(m->term(), m->from());  // always m.term == r.term
+  //     HandleAppendEntries(m);
+  //     return Status::OK();
+  //   }
+  //   case raftpb::MessageType::MsgHeartbeat: {
+  //     BecomeFollower(m->term(), m->from());  // always m.term == r.term
+  //     HandleHearbeat(m);
+  //     return Status::OK();
+  //   }
+  //   case raftpb::MessageType::MsgSnap: {
+  //     BecomeFollower(m->term(), m->from());  // always m.term == r.term
+  //     HandleSnapshot(m);
+  //     return Status::OK();
+  //   }
+  //   case my_vote_resp_type: {
+  //     auto [gr, rj, res] = Poll(m->from(), m->type(), !m->reject());
+  //     LOG_INFO("%llu has received %lld %s votes and %lld vote rejections", id_,
+  //              gr, raftpb::MessageType_Name(m->type()).c_str(), rj);
+  //     if (res == VoteState::kVoteWon) {
+  //       if (state_ == RaftStateType::kPreCandidate) {
+  //         Campaign(CampaignType::kElection);
+  //       } else {
+  //         BecomeLeader();
+  //         BcastAppend();
+  //       }
+  //     } else if (res == VoteState::kVoteLost) {
+  //       // pb.MsgPreVoteResp contains future term of pre-candidate
+  //       // m.Term > r.Term; reuse r.Term
+  //       BecomeFollower(term_, kNone);
+  //     } else {
+  //       // do nothing
+  //     }
+  //     return Status::OK();
+  //   }
+  //   case raftpb::MessageType::MsgTimeoutNow: {
+  //     LOG_DEBUG("%llu [term %llu state %s] ignored MsgTimeoutNow from %llu",
+  //               id_, term_, RaftStateTypeName(state_).c_str(), m->from());
+  //     return Status::OK();
+  //   }
+  // }
   return Status::OK();
 }
 
@@ -1499,6 +1545,9 @@ Status Raft::StepFollower(MsgPtr m) {
           .index = m->index(), .request_ctx = m->entries()[0].data()});
       break;
     }
+    default: {
+      break;
+    }
   }
   return Status::OK();
 }
@@ -1566,7 +1615,6 @@ void Raft::HandleHearbeat(MsgPtr m) {
 void Raft::HandleSnapshot(MsgPtr m) {
   auto sindex = m->snapshot().metadata().index();
   auto sterm = m->snapshot().metadata().term();
-  // TODO(juntaosu): move snapshot
   auto s = std::make_shared<raftpb::Snapshot>(std::move(*m->mutable_snapshot()));
   if (Restore(s)) {
     LOG_INFO("%llu [commit: %llu] restored snapshot [index: %llu, term: %llu]",
@@ -1697,7 +1745,7 @@ raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2&& cc) {
     }
 
     std::vector<raftpb::ConfChangeSingle> ccs;
-    for (size_t i = 0; i < cc.changes_size(); i++) {
+    for (int i = 0; i < cc.changes_size(); i++) {
       ccs.emplace_back(cc.changes(i));
     }
 

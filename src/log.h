@@ -49,8 +49,8 @@ class RaftLog {
   std::string String() const {
     char buf[1024];
     snprintf(buf, sizeof(buf),
-             "committed=%d, applied=%d, unstable.offset=%d, "
-             "len(unstable.Entries)=%d",
+             "committed=%" PRIu64 ", applied=%" PRIu64 ", unstable.offset=%" PRIu64 ", "
+             "len(unstable.Entries)=%zu",
              committed_, applied_, unstable_.offset_,
              unstable_.entries_.size());
     return std::string(buf);

@@ -36,7 +36,7 @@ EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
 
 EntryPtrs Util::MakeEntries(MsgPtr msg) {
   EntryPtrs entries;
-  for (size_t i = 0; i < msg->entries_size(); i++) {
+  for (int i = 0; i < msg->entries_size(); i++) {
     entries.emplace_back(
         std::make_shared<raftpb::Entry>(std::move(*(msg->mutable_entries(i)))));
   }

@@ -34,7 +34,7 @@ template <typename GN, typename GID, typename GT>
 static std::vector<raftpb::ConfChangeSingle> genCC(GN&& num, GID&& id, GT&& typ) {
   std::vector<raftpb::ConfChangeSingle> ccs;
   auto n = num();
-  for (size_t i = 0; i < n; i++) {
+  for (int i = 0; i < n; i++) {
     raftpb::ConfChangeSingle cc;
     cc.set_type(typ());
     cc.set_node_id(id());

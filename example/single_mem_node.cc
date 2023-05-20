@@ -7,7 +7,7 @@
 #include "rawnode.h"
 #include "blockingconcurrentqueue.h"
 
-struct RaftNode {
+struct Peer {
   std::unique_ptr<craft::RawNode> rn;
   std::shared_ptr<craft::MemoryStorage> storage;
 };
@@ -17,22 +17,22 @@ struct Request {
   std::function<void()> cb;
 };
 
-static void onReady(RaftNode& raft_node, std::map<std::string, std::function<void()>>& waiters) {
-  if (!raft_node.rn->HasReady()) {
+static void onReady(Peer& peer, std::map<std::string, std::function<void()>>& waiters) {
+  if (!peer.rn->HasReady()) {
     return;
   }
-  auto rd = raft_node.rn->GetReady();
+  auto rd = peer.rn->GetReady();
 
   // Persistent hard state and entries.
   // rd.hard_state / rd.entries
 
   if (!craft::IsEmptySnap(rd.snapshot)) {
     // Persistent snapshot
-    raft_node.storage->ApplySnapshot(rd.snapshot);
+    peer.storage->ApplySnapshot(rd.snapshot);
     // Apply snapshot
   }
 
-  raft_node.storage->Append(rd.entries);
+  peer.storage->Append(rd.entries);
 
   auto handle_messages = [](const craft::MsgPtrs& msgs) {
   };
@@ -55,7 +55,7 @@ static void onReady(RaftNode& raft_node, std::map<std::string, std::function<voi
   };
   handle_committed_entries(rd.committed_entries);
 
-  raft_node.rn->Advance(rd);
+  peer.rn->Advance(rd);
 }
 
 static void sendPropose(moodycamel::BlockingConcurrentQueue<std::any>& q) {
@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
     .max_size_per_msg = 1024 * 1024 * 1024,
     .max_inflight_msgs = 256,
   };
-  RaftNode raft_node {
+  Peer peer {
     .rn = craft::RawNode::Start(cfg, {craft::Peer{1}}),
     .storage = storage,
   };
@@ -94,10 +94,11 @@ int main(int argc, char* argv[]) {
   });
 
   int64_t heartbeat_timeout = 100;
+  int64_t wait_timeout = heartbeat_timeout;
   auto hearbeat_time = std::chrono::system_clock::now();
   while (1) {
     std::vector<std::any> items(10);
-    size_t count = q.wait_dequeue_bulk_timed(items.begin(), 10, std::chrono::milliseconds(heartbeat_timeout));
+    size_t count = q.wait_dequeue_bulk_timed(items.begin(), 10, std::chrono::milliseconds(wait_timeout));
     for (size_t i = 0; i < count; i++) {
       auto& item = items[i];
       if (item.type() == typeid(Request)) {
@@ -105,20 +106,23 @@ int main(int argc, char* argv[]) {
         std::string id = std::to_string(req.id);
         waiters[id] = std::move(req.cb);  // register
         std::string data = id;  // encode request
-        raft_node.rn->Propose(data);
+        peer.rn->Propose(data);
       } else if (item.type() == typeid(craft::MsgPtr)) {
         auto m = std::any_cast<craft::MsgPtr>(std::move(item));
-        raft_node.rn->Step(m);
+        peer.rn->Step(m);
       }
     }
 
     auto now = std::chrono::system_clock::now();
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - hearbeat_time).count() > heartbeat_timeout) {
       hearbeat_time = now;
-      raft_node.rn->Tick();
+      wait_timeout = heartbeat_timeout;
+      peer.rn->Tick();
+    } else {
+      wait_timeout = heartbeat_timeout - std::chrono::duration_cast<std::chrono::milliseconds>(now - hearbeat_time).count();
     }
 
-    onReady(raft_node, waiters);
+    onReady(peer, waiters);
   }
 
   thread.join();

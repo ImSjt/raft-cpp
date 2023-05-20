@@ -42,9 +42,9 @@ static bool MustSync(const raftpb::HardState& st, const raftpb::HardState& prevs
   return entsum != 0 || st.vote() != prevst.vote() || st.term() != prevst.term();
 }
 
-bool operator==(const SoftState& s1, const SoftState& s2) {
-  return s1.lead == s2.lead && s1.raft_state == s2.raft_state;
-}
+// bool operator==(const SoftState& s1, const SoftState& s2) {
+//   return s1.lead == s2.lead && s1.raft_state == s2.raft_state;
+// }
 
 bool operator==(const raftpb::HardState& s1, const raftpb::HardState& s2) {
   return s1.term() == s2.term() && s1.vote() == s2.vote() && s1.commit() == s2.commit();
@@ -53,7 +53,7 @@ bool operator==(const raftpb::HardState& s1, const raftpb::HardState& s2) {
 std::unique_ptr<RawNode> RawNode::New(Raft::Config& c) {
   auto raft = Raft::New(c);
   auto rn = std::make_unique<RawNode>(std::move(raft));
-  return std::move(rn);
+  return rn;
 }
 
 Status RawNode::Bootstrap(std::vector<Peer> peers) {

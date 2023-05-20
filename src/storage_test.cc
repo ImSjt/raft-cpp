@@ -54,40 +54,13 @@ static bool IsEqual(std::shared_ptr<raftpb::Snapshot> a, std::shared_ptr<raftpb:
   if (avoters.size() != bvoters.size()) {
     return false;
   }
-  for (size_t i = 0; i < avoters.size(); i++) {
+  for (int i = 0; i < avoters.size(); i++) {
     if (avoters[i] != bvoters[i]) {
       return false;
     }
   }
   return true;
 }
-
-// class MemoryStorageTest : public ::testing::Test {
-// protected:
-//     void SetUp() override {
-//         for (uint64_t i = 3; i <= 5; i++) {
-//             ents_.push_back(makeEntry(i, i));
-//         }
-
-//         storage_.ents_ = ents_; // [3, 4, 5]
-//     }
-
-//     // void TearDown() override {}
-
-// protected:
-//     std::vector<raftpb::Entry> ents_;
-//     craft::MemoryStorage storage_;
-
-// };
-
-// static raftpb::Entry makeEntry(uint64_t index, uint64_t term) {
-//     raftpb::Entry ent;
-
-//     ent.set_index(index);
-//     ent.set_term(term);
-
-//     return ent;
-// }
 
 TEST(MemoryStorage, Term) {
   craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
@@ -166,12 +139,12 @@ TEST(MemoryStorage, LastIndex) {
 
   auto [last, status] = s.LastIndex();
   ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(last, 5);
+  ASSERT_EQ(last, static_cast<uint64_t>(5));
 
   s.Append({makeEntry(6, 5)});
   std::tie(last, status) = s.LastIndex();
   ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(last, 6);;
+  ASSERT_EQ(last, static_cast<uint64_t>(6));;
 }
 
 TEST(MemoryStorage, FirstIndex) {
@@ -181,12 +154,12 @@ TEST(MemoryStorage, FirstIndex) {
 
   auto [first, status] = s.FirstIndex();
   ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(first, 4);
+  ASSERT_EQ(first, static_cast<uint64_t>(4));
 
   s.Compact(4);
   std::tie(first, status) = s.FirstIndex();
   ASSERT_TRUE(status.IsOK());
-  EXPECT_EQ(first, 5);
+  EXPECT_EQ(first, static_cast<uint64_t>(5));
 }
 
 TEST(MemoryStorage, Compact) {

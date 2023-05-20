@@ -101,7 +101,7 @@ craft::MsgPtrs NetWork::Filter(craft::MsgPtrs msgs) {
       if (it != dropm_.end()) {
         perc = it->second;
       }
-      if (random(0, 99) < perc) {
+      if (random(0, 99) < static_cast<int>(perc)) {
         continue;          
       }
     }
@@ -113,4 +113,129 @@ craft::MsgPtrs NetWork::Filter(craft::MsgPtrs msgs) {
     mm.emplace_back(m);
   }
   return mm;
+}
+
+std::vector<uint64_t> idsBySize(size_t size) {
+  std::vector<uint64_t> ids;
+  for (size_t i = 0; i < size; i++) {
+    ids.push_back(static_cast<uint64_t>(i) + 1);
+  }
+  return ids;
+};
+
+std::shared_ptr<craft::MemoryStorage> newTestMemoryStorage(std::vector<testMemoryStorageOptions> opts) {
+  auto ms = std::make_shared<craft::MemoryStorage>();
+  for (auto& o : opts) {
+    o(ms);
+  }
+  return ms;
+}
+
+testMemoryStorageOptions withPeers(std::vector<uint64_t> peers) {
+  return [peers](std::shared_ptr<craft::MemoryStorage> ms) {
+    auto [snap, s] = ms->SnapShot();
+    assert(s.IsOK());
+    snap->mutable_metadata()->mutable_conf_state()->mutable_voters()->Clear();
+    for (auto peer : peers) {
+      snap->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(peer);
+    }
+  };
+}
+
+testMemoryStorageOptions withLearners(std::vector<uint64_t> learners) {
+  return [learners](std::shared_ptr<craft::MemoryStorage> ms) {
+    auto [snap, s] = ms->SnapShot();
+    assert(s.IsOK());
+    snap->mutable_metadata()->mutable_conf_state()->mutable_learners()->Clear();
+    for (auto learner : learners) {
+      snap->mutable_metadata()->mutable_conf_state()->mutable_learners()->Add(learner);
+    }
+  };
+}
+
+craft::Raft::Config newTestConfig(uint64_t id, int64_t election, int64_t heartbeat, std::shared_ptr<craft::Storage> storage) {
+  return craft::Raft::Config{
+    .id = id,
+    .election_tick = election,
+    .heartbeat_tick = heartbeat,
+    .storage = storage,
+    .max_size_per_msg = craft::Raft::kNoLimit,
+    .max_inflight_msgs = 256,
+  };
+}
+
+std::shared_ptr<Raft> newTestRaft(uint64_t id, uint64_t election, uint64_t heartbeat, std::shared_ptr<craft::Storage> storage) {
+  auto cfg = newTestConfig(id, election, heartbeat, storage);
+  return std::make_shared<Raft>(craft::Raft::New(cfg));
+}
+
+std::shared_ptr<Raft> newTestRaftWithConfig(craft::Raft::Config& cfg) {
+  return std::make_shared<Raft>(craft::Raft::New(cfg));
+}
+
+std::shared_ptr<Raft> newTestLearnerRaft(uint64_t id, uint64_t election, uint64_t hearbeat, std::shared_ptr<craft::Storage> storage) {
+  auto cfg = newTestConfig(id, election, hearbeat, storage);
+  return std::make_shared<Raft>(craft::Raft::New(cfg));
+}
+
+void preVoteConfig(craft::Raft::Config& cfg) {
+  cfg.pre_vote = true;
+}
+
+std::shared_ptr<Raft> entsWithConfig(NetWork::ConfigFunc config_func, std::vector<uint64_t> terms) {
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  for (size_t i = 0; i < terms.size(); i++) {
+    storage->Append({NEW_ENT().Index(i+1).Term(terms[i])()});
+  }
+  auto cfg = newTestConfig(1, 5, 1, storage);
+  if (config_func) {
+    config_func(cfg);
+  }
+  auto raft = craft::Raft::New(cfg);
+  raft->Reset(terms[terms.size()-1]);
+  return Raft::New(std::move(raft));
+}
+
+std::shared_ptr<Raft> votedWithConfig(NetWork::ConfigFunc config_func, uint64_t vote, uint64_t term) {
+  auto storage = std::make_shared<craft::MemoryStorage>();
+  raftpb::HardState hard_state;
+  hard_state.set_vote(vote);
+  hard_state.set_term(term);
+  storage->SetHardState(hard_state);
+  auto cfg = newTestConfig(1, 5, 1, storage);
+  if (config_func) {
+    config_func(cfg);
+  }
+  auto raft = craft::Raft::New(cfg);
+  raft->Reset(term);
+  return Raft::New(std::move(raft));
+}
+
+raftpb::ConfChangeV2 makeConfChange(uint64_t id, raftpb::ConfChangeType type) {
+  raftpb::ConfChange cc;
+  cc.set_node_id(id);
+  cc.set_type(type);
+  craft::ConfChangeI cci(std::move(cc));
+  return cci.AsV2();
+}
+
+raftpb::ConfChangeV2 makeConfChange(std::vector<std::pair<uint64_t, raftpb::ConfChangeType>> ccs) {
+  raftpb::ConfChangeV2 cc_v2;
+  for (auto& p : ccs) {
+    auto change_single = cc_v2.add_changes();
+    change_single->set_type(p.second);
+    change_single->set_node_id(p.first);
+  }
+  return cc_v2;
+}
+
+std::string raftlogString(craft::RaftLog* l) {
+  std::stringstream ss;
+  ss << "committed: " << l->Committed() << std::endl;
+  ss << "applied: " << l->Applied() << std::endl;
+  auto ents = l->AllEntries();
+  for (size_t i = 0; i < ents.size(); i++) {
+    ss << "#" << i << ": " << ents[i]->SerializeAsString() << std::endl;
+  }
+  return ss.str();
 }

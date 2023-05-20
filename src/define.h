@@ -16,6 +16,7 @@
 #include <memory>
 #include <deque>
 #include <vector>
+#include <cinttypes>
 
 #include "raftpb/raft.pb.h"
 

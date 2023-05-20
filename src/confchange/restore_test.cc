@@ -94,10 +94,10 @@ static raftpb::ConfState genConfState() {
 	// NB: this code avoids creating non-nil empty slices (here and below).
   auto noutgoing_retained_voters = random(0, nvoters);
   if (noutgoing_retained_voters > 0 || nremoved_voters > 0) {
-    for (size_t i = 0; i < noutgoing_retained_voters; i++) {
+    for (int i = 0; i < noutgoing_retained_voters; i++) {
       cs.add_voters_outgoing(cs.voters(i));
     }
-    for (size_t i = 0; i < nremoved_voters; i++) {
+    for (int i = 0; i < nremoved_voters; i++) {
       cs.add_voters_outgoing(ids[i]);
     }
   }
@@ -105,42 +105,12 @@ static raftpb::ConfState genConfState() {
 	// LearnersNext (they represent demotions).
   if (nremoved_voters > 0) {
     auto nlearners_next = random(0, nremoved_voters);
-    for (size_t i = 0; i < nlearners_next; i++) {
+    for (int i = 0; i < nlearners_next; i++) {
       cs.add_learners_next(ids[i]);
     }
   }
   cs.set_auto_leave(cs.voters_outgoing().size() > 0 && (random(0, 1) == 1));
   return cs;
-}
-
-static void printConfState(const raftpb::ConfState& cs) {
-  std::cout << "=========" << std::endl;
-  std::cout << "voters:";
-  for (auto voter : cs.voters()) {
-    std::cout << voter << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "learners:";
-  for (auto learner : cs.learners()) {
-    std::cout << learner << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "voters_outgoing:";
-  for (auto voter : cs.voters_outgoing()) {
-    std::cout << voter << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "learners_next:";
-  for (auto learner : cs.learners_next()) {
-    std::cout << learner << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "auto_leave:" << cs.auto_leave() << std::endl;
-  std::cout << "=========" << std::endl;
 }
 
 TEST(Restore, Quick) {

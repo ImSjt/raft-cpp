@@ -66,7 +66,7 @@ TEST(Raft, ProgressPaused) {
   r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
 
   auto ms = r->ReadMessages();
-  ASSERT_EQ(ms.size(), 1);
+  ASSERT_EQ(ms.size(), static_cast<size_t>(1));
 }
 
 TEST(Raft, ProgressFlowControl) {
@@ -91,17 +91,17 @@ TEST(Raft, ProgressFlowControl) {
 	// First append has two entries: the empty entry to confirm the
 	// election, and the first proposal (only one proposal gets sent
 	// because we're in probe state).
-  ASSERT_EQ(ms.size(), 1);
+  ASSERT_EQ(ms.size(), static_cast<size_t>(1));
   ASSERT_EQ(ms[0]->type(), raftpb::MessageType::MsgApp);
   ASSERT_EQ(ms[0]->entries().size(), 2);
-  ASSERT_EQ(ms[0]->entries(0).data().size(), 0);
-  ASSERT_EQ(ms[0]->entries(1).data().size(), 1000);
+  ASSERT_EQ(ms[0]->entries(0).data().size(), static_cast<size_t>(0));
+  ASSERT_EQ(ms[0]->entries(1).data().size(), static_cast<size_t>(1000));
 
 	// When this append is acked, we change to replicate state and can
 	// send multiple messages at once.
   r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp).Index(ms[0]->entries(1).index())());
   ms = r->ReadAndClearMsgs();
-  ASSERT_EQ(ms.size(), 3);
+  ASSERT_EQ(ms.size(), static_cast<size_t>(3));
   for (auto m : ms) {
     ASSERT_EQ(m->type(), raftpb::MessageType::MsgApp);
     ASSERT_EQ(m->entries().size(), 2);
@@ -111,7 +111,7 @@ TEST(Raft, ProgressFlowControl) {
 	// messages (containing three entries).
   r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp).Index(ms[2]->entries(1).index())());
   ms = r->ReadAndClearMsgs();
-  ASSERT_EQ(ms.size(), 2);
+  ASSERT_EQ(ms.size(), static_cast<size_t>(2));
   for (auto m : ms) {
     ASSERT_EQ(m->type(), raftpb::MessageType::MsgApp);
   }
@@ -129,7 +129,7 @@ TEST(Raft, UncommittedEntryLimit) {
   auto test_entry = NEW_ENT().Data("testdata")();
   size_t max_entry_size = max_entries * craft::Util::PayloadSize(test_entry);
 
-  ASSERT_EQ(craft::Util::PayloadSize(std::make_shared<raftpb::Entry>()), 0);
+  ASSERT_EQ(craft::Util::PayloadSize(std::make_shared<raftpb::Entry>()), static_cast<size_t>(0));
 
   auto cfg = newTestConfig(1, 4, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
   cfg.max_uncommitted_entries_size = static_cast<uint64_t>(max_entry_size);
@@ -137,7 +137,7 @@ TEST(Raft, UncommittedEntryLimit) {
   auto r = craft::Raft::New(cfg);
   r->BecomeCandidate();
   r->BecomeLeader();
-  ASSERT_EQ(r->UncommittedSize(), 0);
+  ASSERT_EQ(r->UncommittedSize(), static_cast<uint64_t>(0));
 
   // Set the two followers to the replicate state. Commit to tail of log.
   size_t num_followers = 2;
@@ -163,7 +163,7 @@ TEST(Raft, UncommittedEntryLimit) {
   auto ms = r->ReadAndClearMsgs();
   ASSERT_EQ(ms.size(), max_entries * num_followers);
   r->ReduceUncommittedSize(prop_ents);
-  ASSERT_EQ(r->UncommittedSize(), 0);
+  ASSERT_EQ(r->UncommittedSize(), static_cast<uint64_t>(0));
 
 	// Send a single large proposal to r1. Should be accepted even though it
 	// pushes us above the limit because we were beneath it before the proposal.
@@ -191,7 +191,7 @@ TEST(Raft, UncommittedEntryLimit) {
   ms = r->ReadAndClearMsgs();
   ASSERT_EQ(ms.size(), num_followers * 2);
   r->ReduceUncommittedSize(prop_ents);
-  ASSERT_EQ(r->UncommittedSize(), 0);
+  ASSERT_EQ(r->UncommittedSize(), static_cast<uint64_t>(0));
 }
 
 static void testLeaderElection(bool pre_vote) {
@@ -282,7 +282,7 @@ TEST(Raft, LearnerPromotion) {
 
   // n1 should become leader
   n1->Get()->SetRandomizedElectionTimeout(n1->Get()->ElectionTimeout());
-  for (size_t i = 0; i < n1->Get()->ElectionTimeout(); i++) {
+  for (int64_t i = 0; i < n1->Get()->ElectionTimeout(); i++) {
     n1->Get()->Tick();
   }
 
@@ -297,7 +297,7 @@ TEST(Raft, LearnerPromotion) {
 
   // n2 start election, should become leader
   n2->Get()->SetRandomizedElectionTimeout(n2->Get()->ElectionTimeout());
-  for (size_t i = 0; i < n2->Get()->ElectionTimeout(); i++) {
+  for (int64_t i = 0; i < n2->Get()->ElectionTimeout(); i++) {
     n2->Get()->Tick();
   }
 
@@ -322,7 +322,7 @@ TEST(Raft, LearnerCanVote) {
   m->set_index(11);
   n2->Step({m});
 
-  ASSERT_EQ(n2->Get()->Msgs().size(), 1);
+  ASSERT_EQ(n2->Get()->Msgs().size(), static_cast<size_t>(1));
   auto msg = n2->Get()->Msgs()[0];
   ASSERT_EQ(msg->type(), raftpb::MessageType::MsgVoteResp);
   ASSERT_FALSE(msg->reject());
@@ -393,12 +393,12 @@ static void testLeaderElectionOverwriteNewerLogs(bool pre_vote) {
   n->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
   auto sm1 = std::dynamic_pointer_cast<Raft>(n->Peers()[1]);
   ASSERT_EQ(sm1->Get()->State(), craft::RaftStateType::kFollower);
-  ASSERT_EQ(sm1->Get()->Term(), 2);
+  ASSERT_EQ(sm1->Get()->Term(), static_cast<uint64_t>(2));
 
   // Node 1 campaigns again with a higher term. This time it succeeds.
   n->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
   ASSERT_EQ(sm1->Get()->State(), craft::RaftStateType::kLeader);
-  ASSERT_EQ(sm1->Get()->Term(), 3);
+  ASSERT_EQ(sm1->Get()->Term(), static_cast<uint64_t>(3));
 
 	// Now all nodes agree on a log entry with term 1 at index 1 (and
 	// term 3 at index 2).
@@ -557,7 +557,7 @@ TEST(Raft, LearnerLogReplication) {
   n2->Get()->BecomeFollower(1, craft::Raft::kNone);
 
   n1->Get()->SetRandomizedElectionTimeout(n1->Get()->ElectionTimeout());
-  for (size_t i = 0; i < n1->Get()->ElectionTimeout(); i++) {
+  for (int64_t i = 0; i < n1->Get()->ElectionTimeout(); i++) {
     n1->Get()->Tick();
   }
 
@@ -1543,7 +1543,7 @@ TEST(Raft, FreeStuckCandidateWithCheckQuorum) {
   auto nt = NetWork::New({a, b, c});
   b->Get()->SetRandomizedElectionTimeout(b->Get()->ElectionTimeout() + 1);
 
-  for (size_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
+  for (int64_t i = 0; i < b->Get()->ElectionTimeout(); i++) {
     b->Get()->Tick();
   }
   nt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
@@ -1723,7 +1723,7 @@ TEST(Raft, ReadOnlyOptionSafe) {
     nt->Send({NEW_MSG().From(tt.sm->Get()->ID()).To(tt.sm->Get()->ID()).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(tt.wctx)()})()});
 
     auto r = tt.sm;
-    ASSERT_NE(r->Get()->GetReadStates().size(), 0);
+    ASSERT_NE(r->Get()->GetReadStates().size(), static_cast<size_t>(0));
     auto& rs = r->Get()->GetReadStates()[0];
     ASSERT_EQ(rs.index, tt.wri);
     ASSERT_EQ(rs.request_ctx, tt.wctx);
@@ -1766,7 +1766,7 @@ TEST(Raft, ReadOnlyWithLearner) {
     nt->Send({NEW_MSG().From(tt.sm->Get()->ID()).To(tt.sm->Get()->ID()).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(tt.wctx)()})()});
 
     auto r = tt.sm;
-    ASSERT_NE(r->Get()->GetReadStates().size(), 0);
+    ASSERT_NE(r->Get()->GetReadStates().size(), static_cast<size_t>(0));
     auto& rs = r->Get()->GetReadStates()[0];
     ASSERT_EQ(rs.index, tt.wri);
     ASSERT_EQ(rs.request_ctx, tt.wctx);
@@ -1815,7 +1815,7 @@ TEST(Raft, ReadOnlyOptionLease) {
     nt->Send({NEW_MSG().From(tt.sm->Get()->ID()).To(tt.sm->Get()->ID()).Type(raftpb::MessageType::MsgReadIndex).Entries({NEW_ENT().Data(tt.wctx)()})()});
 
     auto r = tt.sm;
-    ASSERT_NE(r->Get()->GetReadStates().size(), 0);
+    ASSERT_NE(r->Get()->GetReadStates().size(), static_cast<size_t>(0));
     auto& rs = r->Get()->GetReadStates()[0];
     ASSERT_EQ(rs.index, tt.wri);
     ASSERT_EQ(rs.request_ctx, tt.wctx);

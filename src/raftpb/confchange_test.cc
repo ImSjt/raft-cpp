@@ -57,7 +57,7 @@ TEST(ConfChange, AsV2) {
     ASSERT_EQ(cc_v2.transition(), cc.transition());
     ASSERT_EQ(cc_v2.context(), cc.context());
     ASSERT_EQ(cc_v2.changes_size(), cc.changes_size());
-    for (size_t i = 0; i < cc_v2.changes_size(); i++) {
+    for (int i = 0; i < cc_v2.changes_size(); i++) {
       ASSERT_EQ(cc_v2.changes(i).type(), cc.changes(i).type());
       ASSERT_EQ(cc_v2.changes(i).node_id(), cc.changes(i).node_id());
     }
@@ -152,7 +152,7 @@ TEST(ConfChange, ConfChangesFromString) {
 
   auto [ccs, status] = craft::ConfChangesFromString(s);
   ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(ccs.size(), 4);
+  ASSERT_EQ(ccs.size(), static_cast<size_t>(4));
   
   ASSERT_EQ(ccs[0].type(), raftpb::ConfChangeType::ConfChangeAddNode);
   ASSERT_EQ(ccs[0].node_id(), 1);
