@@ -285,8 +285,8 @@ TEST(RaftLog, CompactionSideEffects) {
   }
 
   auto unstable_ents = raft_log->UnstableEntries();
-  ASSERT_EQ(unstable_ents.size(), 250);
-  ASSERT_EQ(unstable_ents[0]->index(), 751);
+  ASSERT_EQ(unstable_ents.size(), static_cast<size_t>(250));
+  ASSERT_EQ(unstable_ents[0]->index(), static_cast<uint64_t>(751));
 
   auto prev = raft_log->LastIndex();
   raft_log->Append({makeEntry(raft_log->LastIndex() + 1, raft_log->LastIndex() + 1)});
@@ -294,7 +294,7 @@ TEST(RaftLog, CompactionSideEffects) {
 
   auto [ents, s] = raft_log->Entries(raft_log->LastIndex(), craft::RaftLog::kNoLimit);
   ASSERT_TRUE(s.IsOK());
-  ASSERT_EQ(ents.size(), 1);
+  ASSERT_EQ(ents.size(), static_cast<size_t>(1));
 }
 
 TEST(RaftLog, HasNextEnts) {
@@ -530,7 +530,7 @@ TEST(RaftLog, Compaction) {
           ASSERT_FALSE(tt.wallow);
           continue;
       }
-      ASSERT_EQ(raft_log->AllEntries().size(), tt.wleft[j]);
+      ASSERT_EQ(raft_log->AllEntries().size(), static_cast<size_t>(tt.wleft[j]));
     }
   }
 }
@@ -547,7 +547,7 @@ TEST(RaftLog, LogRestore) {
 
   auto raft_log = craft::RaftLog::New(storage);
 
-  ASSERT_EQ(raft_log->AllEntries().size(), 0);
+  ASSERT_EQ(raft_log->AllEntries().size(), static_cast<size_t>(0));
   ASSERT_EQ(raft_log->FirstIndex(), index + 1);
   ASSERT_EQ(raft_log->Committed(), index);
   ASSERT_EQ(raft_log->GetUnstable().Offset(), index + 1);

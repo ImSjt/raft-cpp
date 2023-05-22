@@ -155,16 +155,16 @@ TEST(ConfChange, ConfChangesFromString) {
   ASSERT_EQ(ccs.size(), static_cast<size_t>(4));
   
   ASSERT_EQ(ccs[0].type(), raftpb::ConfChangeType::ConfChangeAddNode);
-  ASSERT_EQ(ccs[0].node_id(), 1);
+  ASSERT_EQ(ccs[0].node_id(), static_cast<uint64_t>(1));
 
   ASSERT_EQ(ccs[1].type(), raftpb::ConfChangeType::ConfChangeRemoveNode);
-  ASSERT_EQ(ccs[1].node_id(), 2);
+  ASSERT_EQ(ccs[1].node_id(), static_cast<uint64_t>(2));
 
   ASSERT_EQ(ccs[2].type(), raftpb::ConfChangeType::ConfChangeUpdateNode);
-  ASSERT_EQ(ccs[2].node_id(), 3);
+  ASSERT_EQ(ccs[2].node_id(), static_cast<uint64_t>(3));
 
   ASSERT_EQ(ccs[3].type(), raftpb::ConfChangeType::ConfChangeAddLearnerNode);
-  ASSERT_EQ(ccs[3].node_id(), 4);
+  ASSERT_EQ(ccs[3].node_id(), static_cast<uint64_t>(4));
 }
 
 TEST(ConfChange, ConfChangesToString) {

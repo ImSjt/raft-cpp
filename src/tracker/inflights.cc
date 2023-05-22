@@ -28,7 +28,7 @@ void Inflights::Add(uint64_t inflight) {
   if (next >= size) {
     next -= size;
   }
-  if (next >= buffer_.size()) {
+  if (next >= static_cast<int32_t>(buffer_.size())) {
     Grow();
   }
   buffer_[next] = inflight;

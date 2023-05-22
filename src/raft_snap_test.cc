@@ -39,7 +39,7 @@ TEST(Raft, SendingSnapshotSetPendingSnapshot) {
   sm->Get()->GetTracker().GetProgress(2)->SetNext(sm->Get()->GetRaftLog()->FirstIndex());
 
   sm->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp).Index(sm->Get()->GetTracker().GetProgress(2)->Next() - 1).Reject(true)());
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), 11);
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), static_cast<uint64_t>(11));
 }
 
 TEST(Raft, PendingSnapshotPauseReplication) {
@@ -56,7 +56,7 @@ TEST(Raft, PendingSnapshotPauseReplication) {
 
   sm->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
   auto msgs = sm->ReadMessages();
-  ASSERT_EQ(msgs.size(), 0);
+  ASSERT_EQ(msgs.size(), static_cast<size_t>(0));
 }
 
 TEST(Raft, SnapshotFailure) {
@@ -71,8 +71,8 @@ TEST(Raft, SnapshotFailure) {
   sm->Get()->GetTracker().GetProgress(2)->BecomeSnapshot(11);
 
   sm->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgSnapStatus).Reject(true)());
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), 0);
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->Next(), 1);
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), static_cast<uint64_t>(0));
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->Next(), static_cast<uint64_t>(1));
   ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->ProbeSent(), true);
 }
 
@@ -88,8 +88,8 @@ TEST(Raft, SnapshotSucceed) {
   sm->Get()->GetTracker().GetProgress(2)->BecomeSnapshot(11);
 
   sm->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgSnapStatus).Reject(true)());
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), 0);
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->Next(), 1);
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), static_cast<uint64_t>(0));
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->Next(), static_cast<uint64_t>(1));
   ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->ProbeSent(), true);
 }
 
@@ -107,14 +107,14 @@ TEST(Raft, SnapshotAbort) {
 	// A successful msgAppResp that has a higher/equal index than the
 	// pending snapshot should abort the pending snapshot.
   sm->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgAppResp).Index(11)());
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), 0);
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->PendingSnapshot(), static_cast<uint64_t>(0));
 
 	// The follower entered StateReplicate and the leader send an append
 	// and optimistically updated the progress (so we see 13 instead of 12).
 	// There is something to append because the leader appended an empty entry
 	// to the log at index 12 when it assumed leadership.
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->Next(), 13);
-  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->GetInflights()->Count(), 1);
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->Next(), static_cast<uint64_t>(13));
+  ASSERT_EQ(sm->Get()->GetTracker().GetProgress(2)->GetInflights()->Count(), static_cast<int64_t>(1));
 }
 
 int main(int argc, char** argv) {

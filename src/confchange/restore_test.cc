@@ -19,19 +19,12 @@
 #include "confchange/confchange.h"
 #include "confchange/restore.h"
 #include "raftpb/confstate.h"
-
-static std::random_device rd;
-static std::mt19937 gen(rd());
- 
-static int random(int low, int high) {
-  std::uniform_int_distribution<> dist(low, high);
-  return dist(gen);
-}
+#include "util.h"
 
 static std::vector<uint64_t> genRandomArray(int n) {
   std::vector<uint64_t> m(n);
   for (int i = 0; i < n; i++) {
-    int j = random(0, i);
+    int j = craft::Util::Random(0, i);
     m[i] = m[j];
     m[j] = i;
   }
@@ -66,14 +59,14 @@ static std::vector<uint64_t> slice(std::vector<uint64_t>& m, size_t num) {
 static raftpb::ConfState genConfState() {
   raftpb::ConfState cs;
   // NB: never generate the empty ConfState, that one should be unit tested.
-  auto nvoters = 1 + random(0, 4);
+  auto nvoters = 1 + craft::Util::Random(0, 4);
 
-  auto nlearners = random(0, 4);
+  auto nlearners = craft::Util::Random(0, 4);
 
 	// The number of voters that are in the outgoing config but not in the
 	// incoming one. (We'll additionally retain a random number of the
 	// incoming voters below).
-  auto nremoved_voters = random(0, 2);
+  auto nremoved_voters = craft::Util::Random(0, 2);
 
 	// Voters, learners, and removed voters must not overlap. A "removed voter"
 	// is one that we have in the outgoing config but not the incoming one.
@@ -92,7 +85,7 @@ static raftpb::ConfState genConfState() {
 	// previously voters.
 	//
 	// NB: this code avoids creating non-nil empty slices (here and below).
-  auto noutgoing_retained_voters = random(0, nvoters);
+  auto noutgoing_retained_voters = craft::Util::Random(0, nvoters);
   if (noutgoing_retained_voters > 0 || nremoved_voters > 0) {
     for (int i = 0; i < noutgoing_retained_voters; i++) {
       cs.add_voters_outgoing(cs.voters(i));
@@ -104,12 +97,12 @@ static raftpb::ConfState genConfState() {
 	// Only outgoing voters that are not also incoming voters can be in
 	// LearnersNext (they represent demotions).
   if (nremoved_voters > 0) {
-    auto nlearners_next = random(0, nremoved_voters);
+    auto nlearners_next = craft::Util::Random(0, nremoved_voters);
     for (int i = 0; i < nlearners_next; i++) {
       cs.add_learners_next(ids[i]);
     }
   }
-  cs.set_auto_leave(cs.voters_outgoing().size() > 0 && (random(0, 1) == 1));
+  cs.set_auto_leave(cs.voters_outgoing().size() > 0 && (craft::Util::Random(0, 1) == 1));
   return cs;
 }
 

@@ -15,6 +15,8 @@
 
 namespace craft {
 
+thread_local std::mt19937 Util::gen_{std::random_device{}()};
+
 EntryPtrs Util::LimitSize(EntryPtrs&& ents, uint64_t max_size) {
   if (ents.empty()) {
     return EntryPtrs();
@@ -100,6 +102,11 @@ bool Util::IsResponseMsg(raftpb::MessageType msgt) {
          msgt == raftpb::MessageType::MsgHeartbeatResp ||
          msgt == raftpb::MessageType::MsgUnreachable ||
          msgt == raftpb::MessageType::MsgPreVoteResp;
+}
+
+int Util::Random(int lower_bound, int upper_bound) {
+  std::uniform_int_distribution<int> distribution(lower_bound, upper_bound);
+  return distribution(gen_);
 }
 
 }  // namespace craft

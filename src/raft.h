@@ -25,6 +25,7 @@
 #include "read_only.h"
 #include "storage.h"
 #include "tracker/tracker.h"
+#include "logger.h"
 
 namespace craft {
 
@@ -210,6 +211,8 @@ class Raft {
     // hybrid logical clock from assigning the timestamp and then forwarding the
     // data to the leader.
     bool disable_proposal_forwarding = false;
+
+    std::shared_ptr<Logger> logger = std::make_shared<ConsoleLogger>();
 
     Status Validate();
   };
@@ -512,6 +515,8 @@ class Raft {
   // current term. Those will be handled as fast as first log is committed in
   // current term.
   std::deque<MsgPtr> pending_read_index_messages_;
+
+  std::shared_ptr<Logger> logger_;
 };
 
 }  // namespace craft

@@ -110,7 +110,7 @@ TEST(MemoryStorage, Entries) {
     {4, 6, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5)}},
     {4, 7, std::numeric_limits<uint64_t>::max(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5), makeEntry(6, 6)}},
     // even if maxsize is zero, the first entry should be returned
-    {4, 7, 0, craft::Status::OK(), {}},
+    {4, 7, 0, craft::Status::OK(), {makeEntry(4, 4)}},
     // limit to 2
     {4, 7, ents[1]->ByteSizeLong() + ents[2]->ByteSizeLong(), craft::Status::OK(), {makeEntry(4, 4), makeEntry(5, 5)}},
     // limit to 2

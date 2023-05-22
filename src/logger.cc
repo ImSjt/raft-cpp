@@ -1,76 +1,67 @@
+// Copyright 2023 JT
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "logger.h"
 
 #include <cstdio>
 #include <cstdlib>
-#include <cassert>
-#include <cstdarg>
-#include <ctime>
-#include <iostream>
-#include <map>
-#include <string>
-#include <chrono>
 
 namespace craft {
 
-static const char* g_kLogLevel[Logger::kNumLogLevel] = {
-    "TRACE",
-    "DEBUG",
-    "INFO",
-    "WARN",
-    "ERROR",
-    "FATAL"
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
+
+void Logger::Log(LogLevel level, const char* format, ...) {
+  if (level < GetLogLevel()) {
+    return;
+  }
+
+  va_list ap;
+  va_start(ap, format);
+  Logv(level, format, ap);
+  va_end(ap);
+}
+
+void ConsoleLogger::Logv(LogLevel level, const char* format, va_list ap) {
+  printf(GetPrefix(level));
+  vprintf(format, ap);
+  printf("\n");
+  printf(ANSI_COLOR_RESET);
+
+  if (level == LogLevel::kFatal) {
+    abort();
+  }
+}
+
+const char* ConsoleLogger::GetPrefix(LogLevel level) {
+  switch (level) {
+    case LogLevel::kDebug:
+      return ANSI_COLOR_GREEN "[DEBUG] ";
+    case LogLevel::kInfo:
+      return ANSI_COLOR_YELLOW "[INFO] ";
+    case LogLevel::kWarning:
+      return ANSI_COLOR_MAGENTA "[WARNING] ";
+    case LogLevel::kError:
+      return ANSI_COLOR_RED "[ERROR] ";
+    case LogLevel::kFatal:
+      return ANSI_COLOR_RED "[FATAL] ";
+    default:
+      return "";
+  }
+}
+
 };
-
-static void DefaultLogOutput(const char* str, int32_t len, bool fatal);
-
-Logger::Logger()
-    :log_output_(DefaultLogOutput),
-     level_(kTrace) {
-
-}
-
-void Logger::RegisterCallback(LogOutputCb log_output) {
-    assert(log_output != nullptr);
-    
-    log_output_ = log_output;
-}
-
-// 20210318 17:36:52 [DEBUG]: hello world [test.cc:7]
-void Logger::Write(LogLevel level, const char* file, int32_t line, const char* format, ...) {
-    assert(log_output_ != nullptr);
-    assert(level >= kTrace && level <= kFatal);
-
-    // 4k buffer on stack
-    Buffer buffer;
-    va_list vlist;
-
-   // format time、log level、file and line
-    auto tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    // TODO: use std::chrono
-    struct tm* t = localtime(&tt);
-    int32_t len = snprintf(buffer.Current(), buffer.Avail(), "%4d%02d%02d %02d:%02d:%02d [%s] [%s:%d]: ",
-                            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-                            t->tm_hour, t->tm_min, t->tm_sec, g_kLogLevel[level], file, line);
-    buffer.Add(len);
-
-    // log info
-    va_start(vlist, format);
-    len = vsnprintf(buffer.Current(), buffer.Avail(), format, vlist);
-    va_end(vlist);
-    buffer.Add(len);
-
-    len = snprintf(buffer.Current(), buffer.Avail(), "\n");
-    buffer.Add(len);
-
-    log_output_(buffer.Data(), buffer.Length(), (level==kFatal));
-}
-
-static void DefaultLogOutput(const char* str, int32_t len, bool fatal) {
-    std::cout << str;
-
-    if (fatal) {
-        abort();
-    }
-}
-
-} // namespace craft

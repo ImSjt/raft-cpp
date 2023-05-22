@@ -20,14 +20,6 @@
 #include "raft.h"
 #include "raftpb/confchange.h"
 
-static std::random_device rd;
-static std::mt19937 gen(rd());
-
-static int random(int low, int high) {
-  std::uniform_int_distribution<> dist(low, high);
-  return dist(gen);
-}
-
 class Message {
  public:
   Message() { m = std::make_shared<raftpb::Message>(); }

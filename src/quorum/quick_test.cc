@@ -21,19 +21,12 @@
 
 #include "gtest/gtest.h"
 #include "quorum/majority.h"
- 
-static std::random_device rd;
-static std::mt19937 gen(rd());
- 
-static int random(int low, int high) {
-  std::uniform_int_distribution<> dist(low, high);
-  return dist(gen);
-}
+#include "util.h"
 
 static std::vector<int> makeRandomArray(int n) {
   std::vector<int> m(n);
   for (int i = 0; i < n; i++) {
-    int j = random(0, i);
+    int j = craft::Util::Random(0, i);
     m[i] = m[j];
     m[j] = i;
   }
@@ -74,7 +67,7 @@ static craft::Index alternativeMajorityCommittedIndex(
   auto q = c.Size() / 2 + 1;
   craft::Index max_quorum_idx = 0;
   for (auto& p : idx_to_votes) {
-    if (p.second >= q && p.first > max_quorum_idx) {
+    if (p.second >= static_cast<int>(q) && p.first > max_quorum_idx) {
       max_quorum_idx = p.first;
     }
   }
@@ -85,12 +78,12 @@ static craft::Index alternativeMajorityCommittedIndex(
 static std::map<uint64_t, craft::Index> smallRandIdxMap() {
   // std::map<uint64_t, craft::Index>();
   int size = 10;
-  int n = random(0, size);
+  int n = craft::Util::Random(0, size);
   auto ids = makeRandomArray(2 * n);
   ids.erase(ids.begin() + n, ids.end());
   std::vector<int> idxs(ids.size());
   for (size_t i = 0; i < idxs.size(); i++) {
-    idxs[i] = random(0, n);
+    idxs[i] = craft::Util::Random(0, n);
   }
 
   std::map<uint64_t, craft::Index> m;

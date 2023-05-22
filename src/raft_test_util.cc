@@ -1,5 +1,7 @@
 #include "raft_test_util.h"
 
+#include "util.h"
+
 NetWork::NetWork(NetWork::ConfigFunc cfg_func, std::vector<std::shared_ptr<StateMachince>> peers) {
   auto size = peers.size();
   auto peer_addrs = idsBySize(size);
@@ -101,7 +103,7 @@ craft::MsgPtrs NetWork::Filter(craft::MsgPtrs msgs) {
       if (it != dropm_.end()) {
         perc = it->second;
       }
-      if (random(0, 99) < static_cast<int>(perc)) {
+      if (craft::Util::Random(0, 99) < static_cast<int>(perc)) {
         continue;          
       }
     }

@@ -33,7 +33,7 @@ TEST(Raft, MsgAppFlowControlFull) {
   for (int64_t i = 0; i < r->Get()->GetTracker().MaxInflight(); i++) {
     r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
     auto ms = r->ReadMessages();
-    ASSERT_EQ(ms.size(), 1);
+    ASSERT_EQ(ms.size(), static_cast<size_t>(1));
   }
 
   // ensure 1
@@ -43,7 +43,7 @@ TEST(Raft, MsgAppFlowControlFull) {
   for (int64_t i = 0; i < 10; i++) {
     r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
     auto ms = r->ReadMessages();
-    ASSERT_EQ(ms.size(), 0);
+    ASSERT_EQ(ms.size(), static_cast<size_t>(0));
   }
 }
 
@@ -63,7 +63,7 @@ TEST(Raft, MsgAppFlowControlMoveForward) {
   for (int64_t i = 0; i < r->Get()->GetTracker().MaxInflight(); i++) {
     r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
     auto ms = r->ReadMessages();
-    ASSERT_EQ(ms.size(), 1);
+    ASSERT_EQ(ms.size(), static_cast<size_t>(1));
   }
 
 	// 1 is noop, 2 is the first proposal we just sent.
@@ -78,7 +78,7 @@ TEST(Raft, MsgAppFlowControlMoveForward) {
     // fill in the inflights window again
     r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
     auto ms = r->ReadMessages();
-    ASSERT_EQ(ms.size(), 1);
+    ASSERT_EQ(ms.size(), static_cast<size_t>(1));
 
     // ensure 1
     ASSERT_EQ(pr2->GetInflights()->Full(), true);
@@ -120,13 +120,13 @@ TEST(Raft, MsgAppFlowControlRecvHeartbeat) {
     // one slot
     r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
     auto ms = r->ReadMessages();
-    ASSERT_EQ(ms.size(), 1);
+    ASSERT_EQ(ms.size(), static_cast<size_t>(1));
 
 		// and just one slot
     for (int i = 0; i < 10; i++) {
       r->Step(NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})());
       auto ms1 = r->ReadMessages();
-      ASSERT_EQ(ms1.size(), 0);
+      ASSERT_EQ(ms1.size(), static_cast<size_t>(0));
     }
 
     // clear all pending messages.

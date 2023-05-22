@@ -34,7 +34,7 @@ static void testUpdateTermFromMessage(craft::RaftStateType state) {
   }
 
   r->Step(NEW_MSG().Type(raftpb::MessageType::MsgApp).Term(2)());
-  ASSERT_EQ(r->Get()->Term(), 2);
+  ASSERT_EQ(r->Get()->Term(), static_cast<uint64_t>(2));
   ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kFollower);
 }
 
@@ -155,7 +155,7 @@ static void testNonleaderStartElection(craft::RaftStateType state) {
   for (int64_t i = 1; i < 2 * et; i++) {
     r->Get()->Tick();
   }
-  ASSERT_EQ(r->Get()->Term(), 2);
+  ASSERT_EQ(r->Get()->Term(), static_cast<uint64_t>(2));
   ASSERT_EQ(r->Get()->State(), craft::RaftStateType::kCandidate);
   ASSERT_EQ(r->Get()->GetTracker().IsVote(r->Get()->ID()), true);
 
@@ -216,7 +216,7 @@ TEST(Raft, LeaderElectionInOneRoundRPC) {
       r->Step(NEW_MSG().From(p.first).To(1).Term(r->Get()->Term()).Type(raftpb::MessageType::MsgVoteResp).Reject(!p.second)());
     }
     ASSERT_EQ(r->Get()->State(), tt.state);
-    ASSERT_EQ(r->Get()->Term(), 1);
+    ASSERT_EQ(r->Get()->Term(), static_cast<uint64_t>(1));
   }
 }
 
@@ -374,7 +374,7 @@ static void commitNoopEntry(craft::Raft* r, std::shared_ptr<craft::MemoryStorage
   for (auto m : msgs) {
     ASSERT_EQ(m->type(), raftpb::MessageType::MsgApp);
     ASSERT_EQ(m->entries_size(), 1);
-    ASSERT_EQ(m->entries()[0].data().size(), 0);
+    ASSERT_EQ(m->entries()[0].data().size(), static_cast<size_t>(0));
     r->Step(acceptAndReply(m));
   }
 	// ignore further messages to refresh followers' commit index
@@ -788,7 +788,7 @@ TEST(Raft, VoteRequest) {
 
     auto msgs = r->ReadMessages();
     msgsSort(msgs);
-    ASSERT_EQ(msgs.size(), 2);
+    ASSERT_EQ(msgs.size(), static_cast<size_t>(2));
     for (size_t i = 0; i < msgs.size(); i++) {
       auto m = msgs[i];
       ASSERT_EQ(m->type(), raftpb::MessageType::MsgVote);
@@ -835,7 +835,7 @@ TEST(Raft, Voter) {
     r->Step(NEW_MSG().From(2).To(1).Type(raftpb::MessageType::MsgVote).Term(3).LogTerm(tt.logterm).Index(tt.index)());
 
     auto msgs = r->ReadMessages();
-    ASSERT_EQ(msgs.size(), 1);
+    ASSERT_EQ(msgs.size(), static_cast<size_t>(1));
     auto m = msgs[0];
     ASSERT_EQ(m->type(), raftpb::MessageType::MsgVoteResp);
     ASSERT_EQ(m->reject(), tt.wreject);

@@ -16,6 +16,7 @@
 #include "log.h"
 
 #include <cassert>
+#include <cstring>
 
 #include "logger.h"
 #include "util.h"

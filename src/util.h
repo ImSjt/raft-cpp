@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <random>
 
 #include "define.h"
 #include "logger.h"
@@ -52,6 +53,13 @@ class Util {
   static bool IsLocalMsg(raftpb::MessageType msgt);
 
   static bool IsResponseMsg(raftpb::MessageType msgt);
+
+  // [lower_bound, upper_bound]
+  static int Random(int lower_bound, int upper_bound);
+
+ private:
+  static thread_local std::mt19937 gen_;
+
 };
 
 }  // namespace craft

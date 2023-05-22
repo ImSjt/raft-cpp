@@ -21,14 +21,7 @@
 
 #include "gtest/gtest.h"
 #include "confchange/confchange.h"
-
-static std::random_device rd;
-static std::mt19937 gen(rd());
- 
-static int random(int low, int high) {
-  std::uniform_int_distribution<> dist(low, high);
-  return dist(gen);
-}
+#include "util.h"
 
 template <typename GN, typename GID, typename GT>
 static std::vector<raftpb::ConfChangeSingle> genCC(GN&& num, GID&& id, GT&& typ) {
@@ -45,7 +38,7 @@ static std::vector<raftpb::ConfChangeSingle> genCC(GN&& num, GID&& id, GT&& typ)
 
 static std::vector<raftpb::ConfChangeSingle> genInitialChanges() {
   auto num = []() {
-    return 1 + random(0, 4);
+    return 1 + craft::Util::Random(0, 4);
   };
   auto id = [&num]() {
     return static_cast<uint64_t>(num());
@@ -70,7 +63,7 @@ static std::vector<raftpb::ConfChangeSingle> genInitialChanges() {
 
 static std::vector<raftpb::ConfChangeSingle> genConfChanges() {
   auto num = []() {
-    return 1 + random(0, 8);
+    return 1 + craft::Util::Random(0, 8);
   };
   auto id = [&num]() {
 		// Note that num() >= 1, so we're never returning 1 from this method,
@@ -79,7 +72,7 @@ static std::vector<raftpb::ConfChangeSingle> genConfChanges() {
     return 1 + static_cast<uint64_t>(num());
   };
   auto typ = []() {
-    return static_cast<raftpb::ConfChangeType>(random(0, raftpb::ConfChangeType_ARRAYSIZE-1));
+    return static_cast<raftpb::ConfChangeType>(craft::Util::Random(0, raftpb::ConfChangeType_ARRAYSIZE-1));
   };
   return genCC(num, id, typ);
 }

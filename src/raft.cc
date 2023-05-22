@@ -198,14 +198,14 @@ Status Raft::Config::Validate() {
 std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
   auto s1 = c.Validate();
   if (!s1.IsOK()) {
-    LOG_FATAL("config is invalied, err: %s", s1.Str());
+    CRAFT_LOG_FATAL(c.logger, "config is invalied, err: %s", s1.Str());
   }
 
   auto raft_log =
       RaftLog::NewWithSize(c.storage, c.max_committed_size_per_ready);
   auto [hs, cs, s2] = c.storage->InitialState();
   if (!s2.IsOK()) {
-    LOG_FATAL("state is invalied, err:%s", s2.Str());
+    CRAFT_LOG_FATAL(c.logger, "state is invalied, err:%s", s2.Str());
   }
 
   auto last_index = raft_log->LastIndex();
@@ -214,7 +214,7 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
   auto [cfg, prs, s3] =
       ::craft::Restore(Changer(r->GetTracker(), last_index), cs);
   if (!s3.IsOK()) {
-    LOG_FATAL("restore error, err:%s", s3.Str());
+    CRAFT_LOG_FATAL(c.logger, "restore error, err:%s", s3.Str());
   }
 
   auto cs2 = r->SwitchToConfig(cfg, prs);
@@ -237,7 +237,7 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
     }
     nodes_str += std::to_string(voter_nodes[i]);
   }
-  LOG_INFO(
+  CRAFT_LOG_INFO(c.logger,
       "new raft %" PRIu64 " [peers: [%s], term: %" PRIu64 ", commit: %" PRIu64 ", applied: %" PRIu64 ", "
       "lastindex: %" PRIu64 ", lastterm: %" PRIu64 "]",
       r->ID(), nodes_str.c_str(), r->Term(), r->GetRaftLog()->Committed(),
@@ -269,7 +269,8 @@ Raft::Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log)
       heartbeat_timeout_(c.heartbeat_tick),
       election_timeout_(c.election_tick),
       randomized_election_timeout_(0),
-      disable_proposal_forwarding_(c.disable_proposal_forwarding) {}
+      disable_proposal_forwarding_(c.disable_proposal_forwarding),
+      logger_(c.logger) {}
 
 void Raft::Send(MsgPtr m) {
   if (m->from() == kNone) {
@@ -292,12 +293,12 @@ void Raft::Send(MsgPtr m) {
       // - MsgPreVoteResp: m.Term is the term received in the original
       //   MsgPreVote if the pre-vote was granted, non-zero for the
       //   same reasons MsgPreVote is
-      LOG_FATAL("term should be set when sending %s",
+      CRAFT_LOG_FATAL(logger_, "term should be set when sending %s",
                 raftpb::MessageType_Name(m->type()).c_str());
     }
   } else {
     if (m->term() != 0) {
-      LOG_FATAL("term should not be set when sending %s (was %d)",
+      CRAFT_LOG_FATAL(logger_, "term should not be set when sending %s (was %d)",
                 raftpb::MessageType_Name(m->type()).c_str(), m->type());
     }
     // do not attach term to MsgProp, MsgReadIndex
@@ -331,7 +332,7 @@ bool Raft::MaybeSendAppend(uint64_t to, bool send_if_empty) {
   // send snapshot if we failed to get term or entries
   if (!st.IsOK() || !se.IsOK()) {
     if (!pr->RecentActive()) {
-      LOG_DEBUG(
+      CRAFT_LOG_DEBUG(logger_,
           "ignore sending snapshot to %llu since it is not recently active",
           to);
       return false;
@@ -341,33 +342,32 @@ bool Raft::MaybeSendAppend(uint64_t to, bool send_if_empty) {
     auto [snapshot, s] = raft_log_->Snapshot();
     if (!s.IsOK()) {
       if (strstr(s.Str(), kErrSnapshotTemporarilyUnavailable)) {
-        LOG_DEBUG(
+        CRAFT_LOG_DEBUG(logger_,
             "%llu failed to send snapshot to %llu because snapshot is "
             "temporarily unavailable",
             id_, to);
         return false;
       }
-      LOG_FATAL("unexpected state!!!");
+      CRAFT_LOG_FATAL(logger_, "unexpected state!!!");
     }
     if (IsEmptySnap(snapshot)) {
-      LOG_FATAL("need non-empty snapshot");
+      CRAFT_LOG_FATAL(logger_, "need non-empty snapshot");
     }
     m->mutable_snapshot()->CopyFrom(*snapshot);
     auto sindex = snapshot->metadata().index();
     auto sterm = snapshot->metadata().term();
-    LOG_DEBUG(
+    CRAFT_LOG_DEBUG(logger_,
         "%llu [firstindex: %llu, commit: %llu] sent snapshot[index: %llu, "
         "term: %llu] to %x [%s]",
         id_, raft_log_->FirstIndex(), raft_log_->Committed(), sindex, sterm, to,
         pr->String().c_str());
     pr->BecomeSnapshot(sindex);
-    LOG_DEBUG("%llu paused sending replication messages to %llu [%s]", id_, to,
+    CRAFT_LOG_DEBUG(logger_, "%llu paused sending replication messages to %llu [%s]", id_, to,
               pr->String().c_str());
   } else {
     m->set_type(raftpb::MessageType::MsgApp);
     m->set_index(pr->Next() - 1);
     m->set_logterm(term);
-    // TODO(JT): zerocopy
     for (auto& ent : ents) {
       m->add_entries()->CopyFrom(*ent);
     }
@@ -380,9 +380,8 @@ bool Raft::MaybeSendAppend(uint64_t to, bool send_if_empty) {
       } else if (pr->State() == StateType::kProbe) {
         pr->SetProbeSent(true);
       } else {
-        // TODO(JT): add StateTypeName
-        LOG_FATAL("%llu is sending append in unhandled state %s", id_,
-                  pr->State());
+        CRAFT_LOG_FATAL(logger_, "%llu is sending append in unhandled state %s", id_,
+                  StateTypeName(pr->State()));
       }
     }
   }
@@ -453,10 +452,10 @@ void Raft::Advance(const Ready& rd) {
       ent->set_type(raftpb::EntryType::EntryConfChangeV2);
 			// There's no way in which this proposal should be able to be rejected.
       if (!AppendEntry(ent)) {
-        LOG_FATAL("refused un-refusable auto-leaving ConfChangeV2");
+        CRAFT_LOG_FATAL(logger_, "refused un-refusable auto-leaving ConfChangeV2");
       }
       pending_conf_index_ = raft_log_->LastIndex();
-      LOG_INFO("initiating automatic transition out of joint configuration");
+      CRAFT_LOG_INFO(logger_, "initiating automatic transition out of joint configuration");
     }
   }
 
@@ -515,7 +514,7 @@ bool Raft::AppendEntry(const EntryPtrs& es) {
   }
   // Track the size of this uncommitted proposal.
   if (!IncreaseUncommittedSize(es)) {
-    LOG_DEBUG(
+    CRAFT_LOG_DEBUG(logger_,
         "%llu appending new entries to log would exceed uncommitted entry size "
         "limit; dropping proposal",
         id_);
@@ -540,7 +539,7 @@ void Raft::TickElection() {
     m->set_type(raftpb::MessageType::MsgHup);
     auto status = Step(m);
     if (!status.IsOK()) {
-      LOG_DEBUG("error occurred during election: %s", status.Str());
+      CRAFT_LOG_DEBUG(logger_, "error occurred during election: %s", status.Str());
     }
   }
 }
@@ -556,7 +555,7 @@ void Raft::TickHeartbeat() {
       m->set_type(raftpb::MessageType::MsgCheckQuorum);
       auto status = Step(m);
       if (!status.IsOK()) {
-        LOG_DEBUG("error occurred during checking sending heartbeat: %s",
+        CRAFT_LOG_DEBUG(logger_, "error occurred during checking sending heartbeat: %s",
                   status.Str());
       }
     }
@@ -578,7 +577,7 @@ void Raft::TickHeartbeat() {
     m->set_type(raftpb::MessageType::MsgBeat);
     auto status = Step(m);
     if (!status.IsOK()) {
-      LOG_DEBUG("error occurred during checking sending heartbeat: %s",
+      CRAFT_LOG_DEBUG(logger_, "error occurred during checking sending heartbeat: %s",
                 status.Str());
     }
   }
@@ -590,26 +589,26 @@ void Raft::BecomeFollower(uint64_t term, uint64_t lead) {
   tick_ = std::bind(&Raft::TickElection, this);
   lead_ = lead;
   state_ = RaftStateType::kFollower;
-  LOG_INFO("%d became follower at term %llu, vote %llu, lead %llu", id_, term_, vote_, lead_);
+  CRAFT_LOG_INFO(logger_, "%d became follower at term %llu, vote %llu, lead %llu", id_, term_, vote_, lead_);
 }
 
 void Raft::BecomeCandidate() {
   // TODO: remove the panic when the raft implementation is stable
   if (state_ == RaftStateType::kLeader) {
-    LOG_FATAL("invalid transition [leader -> candidate]");
+    CRAFT_LOG_FATAL(logger_, "invalid transition [leader -> candidate]");
   }
   step_ = std::bind(&Raft::StepCandidate, this, std::placeholders::_1);
   Reset(term_ + 1);
   tick_ = std::bind(&Raft::TickElection, this);
   vote_ = id_;
   state_ = RaftStateType::kCandidate;
-  LOG_INFO("%llu became candidate at term %llu", id_, term_);
+  CRAFT_LOG_INFO(logger_, "%llu became candidate at term %llu", id_, term_);
 }
 
 void Raft::BecomePreCandidate() {
   // TODO: remove the panic when the raft implementation is stable
   if (state_ == RaftStateType::kLeader) {
-    LOG_FATAL("invalid transition [leader -> pre-candidate]");
+    CRAFT_LOG_FATAL(logger_, "invalid transition [leader -> pre-candidate]");
   }
   // Becoming a pre-candidate changes our step functions and state,
   // but doesn't change anything else. In particular it does not increase
@@ -619,13 +618,13 @@ void Raft::BecomePreCandidate() {
   tick_ = std::bind(&Raft::TickElection, this);
   lead_ = kNone;
   state_ = RaftStateType::kPreCandidate;
-  LOG_INFO("%llu became pre-candidate at term %llu", id_, term_);
+  CRAFT_LOG_INFO(logger_, "%llu became pre-candidate at term %llu", id_, term_);
 }
 
 void Raft::BecomeLeader() {
   // TODO: remove the panic when the raft implementation is stable
   if (state_ == RaftStateType::kFollower) {
-    LOG_FATAL("invalid transition [follower -> leader]");
+    CRAFT_LOG_FATAL(logger_, "invalid transition [follower -> leader]");
   }
   step_ = std::bind(&Raft::StepLeader, this, std::placeholders::_1);
   Reset(term_);
@@ -649,41 +648,41 @@ void Raft::BecomeLeader() {
   auto empty_ent = std::make_shared<raftpb::Entry>();
   if (!AppendEntry(empty_ent)) {
     // This won't happen because we just called reset() above.
-    LOG_FATAL("empty entry was dropped");
+    CRAFT_LOG_FATAL(logger_, "empty entry was dropped");
   }
   // As a special case, don't count the initial empty entry towards the
   // uncommitted log quota. This is because we want to preserve the
   // behavior of allowing one entry larger than quota if the current
   // usage is zero.
   ReduceUncommittedSize(EntryPtrs{empty_ent});
-  LOG_INFO("%llu became leader at term %llu", id_, term_);
+  CRAFT_LOG_INFO(logger_, "%llu became leader at term %llu", id_, term_);
 }
 
 void Raft::Hup(CampaignType t) {
   if (state_ == RaftStateType::kLeader) {
-    LOG_DEBUG("%llu ignoring MsgHup because already leader", id_);
+    CRAFT_LOG_DEBUG(logger_, "%llu ignoring MsgHup because already leader", id_);
     return;
   }
 
   if (!Promotable()) {
-    LOG_WARNING("%llu is unpromotable and can not campaign", id_);
+    CRAFT_LOG_WARNING(logger_, "%llu is unpromotable and can not campaign", id_);
     return;
   }
   auto [ents, status] = raft_log_->Slice(raft_log_->Applied() + 1,
                                          raft_log_->Committed() + 1, kNoLimit);
   if (!status.IsOK()) {
-    LOG_FATAL("unexpected error getting unapplied entries (%s)", status.Str());
+    CRAFT_LOG_FATAL(logger_, "unexpected error getting unapplied entries (%s)", status.Str());
   }
   auto n = NumOfPendingConf(ents);
   if (n != 0 && raft_log_->Committed() > raft_log_->Applied()) {
-    LOG_WARNING(
+    CRAFT_LOG_WARNING(logger_,
         "%llu cannot campaign at term %llu since there are still %lld pending "
         "configuration changes to apply",
         id_, term_, n);
     return;
   }
 
-  LOG_INFO("%llu is starting a new election at term %llu", id_, term_);
+  CRAFT_LOG_INFO(logger_, "%llu is starting a new election at term %llu", id_, term_);
   Campaign(t);
 }
 
@@ -691,7 +690,7 @@ void Raft::Campaign(CampaignType t) {
   if (!Promotable()) {
     // This path should not be hit (callers are supposed to check), but
     // better safe than sorry.
-    LOG_WARNING("%llu is unpromotable; campaign() should have been called",
+    CRAFT_LOG_WARNING(logger_, "%llu is unpromotable; campaign() should have been called",
                 id_);
   }
   uint64_t term = 0;
@@ -724,7 +723,7 @@ void Raft::Campaign(CampaignType t) {
     if (id == id_) {
       continue;
     }
-    LOG_INFO(
+    CRAFT_LOG_INFO(logger_,
         "%llu [logterm: %llu, term: %llu, index: %llu] sent %s request to %llu at term "
         "%llu",
         id_, raft_log_->LastTerm(), term, raft_log_->LastIndex(),
@@ -746,10 +745,10 @@ std::tuple<int64_t, int64_t, VoteState> Raft::Poll(uint64_t id,
                                                    raftpb::MessageType t,
                                                    bool v) {
   if (v) {
-    LOG_INFO("%llu received %s from %llu at term %llu", id_,
+    CRAFT_LOG_INFO(logger_, "%llu received %s from %llu at term %llu", id_,
              raftpb::MessageType_Name(t).c_str(), id, term_);
   } else {
-    LOG_INFO("%llu received %s rejection from %llu at term %llu", id_,
+    CRAFT_LOG_INFO(logger_, "%llu received %s rejection from %llu at term %llu", id_,
              raftpb::MessageType_Name(t).c_str(), id, term_);
   }
   trk_.RecordVote(id, v);
@@ -770,7 +769,7 @@ Status Raft::Step(MsgPtr m) {
         // If a server receives a RequestVote request within the minimum
         // election timeout of hearing from a current leader, it does not update
         // its term or grant its vote
-        LOG_INFO(
+        CRAFT_LOG_INFO(logger_,
             "%llu [logterm: %llu, index: %llu, vote: %llu] ignored %s from "
             "%llu [logterm: %llu, index: %llu] at term %llu: lease is not "
             "expired (remaining ticks: %lld)",
@@ -789,7 +788,7 @@ Status Raft::Step(MsgPtr m) {
       // rejected our vote so we should become a follower at the new
       // term.
     } else {
-      LOG_INFO(
+      CRAFT_LOG_INFO(logger_,
           "%llu [term: %llu] received a %s message with higher term from "
           "%llu [term: %llu]",
           id_, term_, raftpb::MessageType_Name(m->type()).c_str(), m->from(),
@@ -835,7 +834,7 @@ Status Raft::Step(MsgPtr m) {
       // Before Pre-Vote enable, there may have candidate with higher term,
       // but less log. After update to Pre-Vote, the cluster may deadlock if
       // we drop messages with a lower term.
-      LOG_INFO(
+      CRAFT_LOG_INFO(logger_,
           "%llu [logterm: %llu, index: %llu, vote: %llu] rejected %s from %llu "
           "[logterm: %llu, index: %llu] at term %llu",
           id_, raft_log_->LastTerm(), raft_log_->LastIndex(), vote_,
@@ -849,7 +848,7 @@ Status Raft::Step(MsgPtr m) {
       Send(msg);
     } else {
       // ignore other cases
-      LOG_INFO(
+      CRAFT_LOG_INFO(logger_,
           "%llu [term: %llu] ignored a %s message with lower term from %llu "
           "[term: %llu]",
           id_, term_, raftpb::MessageType_Name(m->type()).c_str(), m->from(),
@@ -893,7 +892,7 @@ Status Raft::Step(MsgPtr m) {
       // be stale, too; but in that case it won't win the election, at least in
       // the absence of the bug discussed in:
       // https://github.com/etcd-io/etcd/issues/7625#issuecomment-488798263.
-      LOG_INFO(
+      CRAFT_LOG_INFO(logger_,
           "%llu [logterm: %llu, index: %llu, vote: %llu] cast %s for %llu "
           "[logterm: %llu, term: %llu index: %llu] at term %llu",
           id_, raft_log_->LastTerm(), raft_log_->LastIndex(), vote_,
@@ -919,7 +918,7 @@ Status Raft::Step(MsgPtr m) {
         vote_ = m->from();
       }
     } else {
-      LOG_INFO(
+      CRAFT_LOG_INFO(logger_,
           "%llu [logterm: %llu, index: %llu, vote: %llu] rejected %s from %llu "
           "[logterm: %llu, term: %llu, index: %llu] at term %llu",
           id_, raft_log_->LastTerm(), raft_log_->LastIndex(), vote_,
@@ -960,7 +959,7 @@ Status Raft::StepLeader(MsgPtr m) {
         pr->SetRecentActive(true);
       }
       if (!trk_.QuorumActive()) {
-        LOG_WARNING("%llu stepped down to follower since quorum is not active",
+        CRAFT_LOG_WARNING(logger_, "%llu stepped down to follower since quorum is not active",
                     id_);
         BecomeFollower(term_, kNone);
       }
@@ -975,7 +974,7 @@ Status Raft::StepLeader(MsgPtr m) {
     }
     case raftpb::MessageType::MsgProp: {
       if (m->entries().size() == 0) {
-        LOG_FATAL("%llu stepped empty MsgProp", id_);
+        CRAFT_LOG_FATAL(logger_, "%llu stepped empty MsgProp", id_);
       }
       if (!trk_.GetProgress(id_)) {
         // If we are not currently a member of the range (i.e. this node
@@ -984,7 +983,7 @@ Status Raft::StepLeader(MsgPtr m) {
         return Status::Error(kErrProposalDropped);
       }
       if (lead_transferee_ != kNone) {
-        LOG_DEBUG(
+        CRAFT_LOG_DEBUG(logger_,
             "%llu [term %llu] transfer leadership to %llu is in progress; "
             "dropping proposal",
             id_, term_, lead_transferee_);
@@ -997,13 +996,13 @@ Status Raft::StepLeader(MsgPtr m) {
         if (e.type() == raftpb::EntryType::EntryConfChange) {
           raftpb::ConfChange ccc;
           if (!ccc.ParseFromString(e.data())) {
-            LOG_FATAL("parse confchange error");
+            CRAFT_LOG_FATAL(logger_, "parse confchange error");
           }
           cc.SetConfChange(std::move(ccc));
         } else if (e.type() == raftpb::EntryType::EntryConfChangeV2) {
           raftpb::ConfChangeV2 ccc;
           if (!ccc.ParseFromString(e.data())) {
-            LOG_FATAL("parse confchange error");
+            CRAFT_LOG_FATAL(logger_, "parse confchange error");
           }
           cc.SetConfChange(std::move(ccc));
         }
@@ -1021,7 +1020,7 @@ Status Raft::StepLeader(MsgPtr m) {
             refused = "not in joint state; refusing empty conf change";
           }
           if (!refused.empty()) {
-            LOG_INFO("%llu ignoring conf change at config %s", id_,
+            CRAFT_LOG_INFO(logger_, "%llu ignoring conf change at config %s", id_,
                      refused.c_str());
             raftpb::Entry entry;
             entry.set_type(raftpb::EntryType::EntryNormal);
@@ -1067,7 +1066,7 @@ Status Raft::StepLeader(MsgPtr m) {
   // All other message types require a progress for m.From (pr).
   auto pr = trk_.GetProgress(m->from());
   if (!pr) {
-    LOG_DEBUG("%llu no progress available for %llu", id_, m->from());
+    CRAFT_LOG_DEBUG(logger_, "%llu no progress available for %llu", id_, m->from());
     return Status::OK();
   }
   switch (m->type()) {
@@ -1094,7 +1093,7 @@ Status Raft::StepLeader(MsgPtr m) {
         // which can easily result in hours of time spent probing and can
         // even cause outright outages. The probes are thus optimized as
         // described below.
-        LOG_DEBUG(
+        CRAFT_LOG_DEBUG(logger_,
             "%llu received MsgAppResp(rejected, hint: (index %llu, term %llu)) "
             "from %llu for index %llu",
             id_, m->rejecthint(), m->logterm(), m->from(), m->index());
@@ -1199,7 +1198,7 @@ Status Raft::StepLeader(MsgPtr m) {
               raft_log_->FindConflictByTerm(m->rejecthint(), m->logterm());
         }
         if (pr->MaybeDecrTo(m->index(), next_probe_idx)) {
-          LOG_DEBUG("%llu decreased progress of %llu to [%s]", id_, m->from(),
+          CRAFT_LOG_DEBUG(logger_, "%llu decreased progress of %llu to [%s]", id_, m->from(),
                     pr->String().c_str());
           if (pr->State() == StateType::kReplicate) {
             pr->BecomeProbe();
@@ -1241,7 +1240,7 @@ Status Raft::StepLeader(MsgPtr m) {
           // Transfer leadership is in progress.
           if (m->from() == lead_transferee_ &&
               pr->Match() == raft_log_->LastIndex()) {
-            LOG_INFO(
+            CRAFT_LOG_INFO(logger_,
                 "%llu sent MsgTimeoutNow to %llu after received MsgAppResp",
                 id_, m->from());
             SendTimeoutNow(m->from());
@@ -1291,7 +1290,7 @@ Status Raft::StepLeader(MsgPtr m) {
       // logic pulled into a newly created Progress state machine handler).
       if (!m->reject()) {
         pr->BecomeProbe();
-        LOG_DEBUG(
+        CRAFT_LOG_DEBUG(logger_,
             "%llu snapshot succeeded, resumed sending replication messages to "
             "%llu [%s]",
             id_, m->from(), pr->String().c_str());
@@ -1300,7 +1299,7 @@ Status Raft::StepLeader(MsgPtr m) {
         // the snapshot index, but the snapshot never applied.
         pr->SetPendingSnapshot(0);
         pr->BecomeProbe();
-        LOG_DEBUG(
+        CRAFT_LOG_DEBUG(logger_,
             "%llu snapshot failed, resumed sending replication messages to "
             "%llu [%s]",
             id_, m->from(), pr->String().c_str());
@@ -1317,21 +1316,21 @@ Status Raft::StepLeader(MsgPtr m) {
       if (pr->State() == StateType::kReplicate) {
         pr->BecomeProbe();
       }
-      LOG_DEBUG(
+      CRAFT_LOG_DEBUG(logger_,
           "%x failed to send message to %x because it is unreachable [%s]", id_,
           m->from(), pr->String().c_str());
       break;
     }
     case raftpb::MessageType::MsgTransferLeader: {
       if (pr->IsLearner()) {
-        LOG_DEBUG("%llu is learner. Ignored transferring leadership", id_);
+        CRAFT_LOG_DEBUG(logger_, "%llu is learner. Ignored transferring leadership", id_);
         return Status::OK();
       }
       auto lead_transferee = m->from();
       auto last_lead_transferee = lead_transferee_;
       if (last_lead_transferee != kNone) {
         if (last_lead_transferee == lead_transferee) {
-          LOG_INFO(
+          CRAFT_LOG_INFO(logger_,
               "%llu [term %llu] transfer leadership to %llu is in progress, "
               "ignores request to same node %llu",
               id_, term_, lead_transferee, lead_transferee);
@@ -1340,13 +1339,13 @@ Status Raft::StepLeader(MsgPtr m) {
         AbortLeaderTransfer();
       }
       if (lead_transferee == id_) {
-        LOG_DEBUG(
+        CRAFT_LOG_DEBUG(logger_,
             "%llu is already leader. Ignored transferring leadership to self",
             id_);
         return Status::OK();
       }
       // Transfer leadership to third party.
-      LOG_INFO("%llu [term %llu] starts to transfer leadership to %llu", id_,
+      CRAFT_LOG_INFO(logger_, "%llu [term %llu] starts to transfer leadership to %llu", id_,
                term_, lead_transferee);
       // Transfer leadership should be finished in one electionTimeout, so reset
       // r.electionElapsed.
@@ -1354,7 +1353,7 @@ Status Raft::StepLeader(MsgPtr m) {
       lead_transferee_ = lead_transferee;
       if (pr->Match() == raft_log_->LastIndex()) {
         SendTimeoutNow(lead_transferee);
-        LOG_INFO(
+        CRAFT_LOG_INFO(logger_,
             "%llu sends MsgTimeoutNow to %llu immediately as %llu already has "
             "up-to-date log",
             id_, lead_transferee, lead_transferee);
@@ -1382,7 +1381,7 @@ Status Raft::StepCandidate(MsgPtr m) {
   }
 
   if (m->type() == raftpb::MessageType::MsgProp) {
-    LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
+    CRAFT_LOG_INFO(logger_, "%llu no leader at term %llu; dropping proposal", id_, term_);
     return Status::Error(kErrProposalDropped);
   } else if (m->type() == raftpb::MessageType::MsgApp) {
     BecomeFollower(m->term(), m->from());  // always m.term == r.term
@@ -1398,7 +1397,7 @@ Status Raft::StepCandidate(MsgPtr m) {
     return Status::OK();
   } else if (m->type() == my_vote_resp_type) {
     auto [gr, rj, res] = Poll(m->from(), m->type(), !m->reject());
-    LOG_INFO("%llu has received %lld %s votes and %lld vote rejections", id_,
+    CRAFT_LOG_INFO(logger_, "%llu has received %lld %s votes and %lld vote rejections", id_,
               gr, raftpb::MessageType_Name(m->type()).c_str(), rj);
     if (res == VoteState::kVoteWon) {
       if (state_ == RaftStateType::kPreCandidate) {
@@ -1416,57 +1415,10 @@ Status Raft::StepCandidate(MsgPtr m) {
     }
     return Status::OK();
   } else if (m->type() == raftpb::MessageType::MsgTimeoutNow) {
-      LOG_DEBUG("%llu [term %llu state %s] ignored MsgTimeoutNow from %llu",
+      CRAFT_LOG_DEBUG(logger_, "%llu [term %llu state %s] ignored MsgTimeoutNow from %llu",
                 id_, term_, RaftStateTypeName(state_).c_str(), m->from());
       return Status::OK();
   }
-
-  // switch (m->type()) {
-  //   case raftpb::MessageType::MsgProp: {
-  //     LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
-  //     return Status::Error(kErrProposalDropped);
-  //   }
-  //   case raftpb::MessageType::MsgApp: {
-  //     BecomeFollower(m->term(), m->from());  // always m.term == r.term
-  //     HandleAppendEntries(m);
-  //     return Status::OK();
-  //   }
-  //   case raftpb::MessageType::MsgHeartbeat: {
-  //     BecomeFollower(m->term(), m->from());  // always m.term == r.term
-  //     HandleHearbeat(m);
-  //     return Status::OK();
-  //   }
-  //   case raftpb::MessageType::MsgSnap: {
-  //     BecomeFollower(m->term(), m->from());  // always m.term == r.term
-  //     HandleSnapshot(m);
-  //     return Status::OK();
-  //   }
-  //   case my_vote_resp_type: {
-  //     auto [gr, rj, res] = Poll(m->from(), m->type(), !m->reject());
-  //     LOG_INFO("%llu has received %lld %s votes and %lld vote rejections", id_,
-  //              gr, raftpb::MessageType_Name(m->type()).c_str(), rj);
-  //     if (res == VoteState::kVoteWon) {
-  //       if (state_ == RaftStateType::kPreCandidate) {
-  //         Campaign(CampaignType::kElection);
-  //       } else {
-  //         BecomeLeader();
-  //         BcastAppend();
-  //       }
-  //     } else if (res == VoteState::kVoteLost) {
-  //       // pb.MsgPreVoteResp contains future term of pre-candidate
-  //       // m.Term > r.Term; reuse r.Term
-  //       BecomeFollower(term_, kNone);
-  //     } else {
-  //       // do nothing
-  //     }
-  //     return Status::OK();
-  //   }
-  //   case raftpb::MessageType::MsgTimeoutNow: {
-  //     LOG_DEBUG("%llu [term %llu state %s] ignored MsgTimeoutNow from %llu",
-  //               id_, term_, RaftStateTypeName(state_).c_str(), m->from());
-  //     return Status::OK();
-  //   }
-  // }
   return Status::OK();
 }
 
@@ -1474,10 +1426,10 @@ Status Raft::StepFollower(MsgPtr m) {
   switch (m->type()) {
     case raftpb::MessageType::MsgProp: {
       if (lead_ == kNone) {
-        LOG_INFO("%llu no leader at term %llu; dropping proposal", id_, term_);
+        CRAFT_LOG_INFO(logger_, "%llu no leader at term %llu; dropping proposal", id_, term_);
         return Status::Error(kErrProposalDropped);
       } else if (disable_proposal_forwarding_) {
-        LOG_INFO("%llu not forwarding to leader %llu at term %llu; dropping proposal",
+        CRAFT_LOG_INFO(logger_, "%llu not forwarding to leader %llu at term %llu; dropping proposal",
                  id_, lead_, term_);
         return Status::Error(kErrProposalDropped);
       }
@@ -1506,7 +1458,7 @@ Status Raft::StepFollower(MsgPtr m) {
     }
     case raftpb::MessageType::MsgTransferLeader: {
       if (lead_ == kNone) {
-        LOG_INFO("%d no leader at term %d; dropping leader transfer msg", id_,
+        CRAFT_LOG_INFO(logger_, "%d no leader at term %d; dropping leader transfer msg", id_,
                  term_);
         return Status::OK();
       }
@@ -1515,7 +1467,7 @@ Status Raft::StepFollower(MsgPtr m) {
       break;
     }
     case raftpb::MessageType::MsgTimeoutNow: {
-      LOG_INFO(
+      CRAFT_LOG_INFO(logger_,
           "%d [term %d] received MsgTimeoutNow from %d and starts an election "
           "to get leadership.",
           id_, term_, m->from());
@@ -1526,7 +1478,7 @@ Status Raft::StepFollower(MsgPtr m) {
     }
     case raftpb::MessageType::MsgReadIndex: {
       if (lead_ == kNone) {
-        LOG_INFO("%d no leader at term %d; dropping index reading msg", id_,
+        CRAFT_LOG_INFO(logger_, "%d no leader at term %d; dropping index reading msg", id_,
                  term_);
         return Status::OK();
       }
@@ -1536,7 +1488,7 @@ Status Raft::StepFollower(MsgPtr m) {
     }
     case raftpb::MessageType::MsgReadIndexResp: {
       if (m->entries().size() != 1) {
-        LOG_INFO(
+        CRAFT_LOG_INFO(logger_,
             "%d invalid format of MsgReadIndexResp from %d, entries count: %d",
             id_, m->from(), m->entries().size());
         return Status::OK();
@@ -1571,7 +1523,7 @@ void Raft::HandleAppendEntries(MsgPtr m) {
     resp->set_index(last_index);
     Send(resp);
   } else {
-    LOG_DEBUG(
+    CRAFT_LOG_DEBUG(logger_,
         "%llu [logterm: %llu, index: %llu] rejected MsgApp [logterm: %llu, "
         "index: %llu] from %llu",
         id_, raft_log_->ZeroTermOnErrCompacted(raft_log_->Term(m->index())),
@@ -1589,7 +1541,7 @@ void Raft::HandleAppendEntries(MsgPtr m) {
     hint_index = raft_log_->FindConflictByTerm(hint_index, m->logterm());
     auto [hint_term, status] = raft_log_->Term(hint_index);
     if (!status.IsOK()) {
-      LOG_FATAL("term(%llu) must be valid, but got %s", hint_index,
+      CRAFT_LOG_FATAL(logger_, "term(%llu) must be valid, but got %s", hint_index,
                 status.Str());
     }
     auto resp = std::make_shared<raftpb::Message>();
@@ -1617,7 +1569,7 @@ void Raft::HandleSnapshot(MsgPtr m) {
   auto sterm = m->snapshot().metadata().term();
   auto s = std::make_shared<raftpb::Snapshot>(std::move(*m->mutable_snapshot()));
   if (Restore(s)) {
-    LOG_INFO("%llu [commit: %llu] restored snapshot [index: %llu, term: %llu]",
+    CRAFT_LOG_INFO(logger_, "%llu [commit: %llu] restored snapshot [index: %llu, term: %llu]",
              id_, raft_log_->Committed(), sindex, sterm);
     auto resp = std::make_shared<raftpb::Message>();
     resp->set_to(m->from());
@@ -1625,7 +1577,7 @@ void Raft::HandleSnapshot(MsgPtr m) {
     resp->set_index(raft_log_->LastIndex());
     Send(resp);
   } else {
-    LOG_INFO("%llu [commit: %llu] ignored snapshot [index: %llu, term: %llu]",
+    CRAFT_LOG_INFO(logger_, "%llu [commit: %llu] ignored snapshot [index: %llu, term: %llu]",
              id_, raft_log_->Committed(), sindex, sterm);
     auto resp = std::make_shared<raftpb::Message>();
     resp->set_to(m->from());
@@ -1647,7 +1599,7 @@ bool Raft::Restore(SnapshotPtr s) {
     //
     // At the time of writing, the instance is guaranteed to be in follower
     // state when this method is called.
-    LOG_WARNING(
+    CRAFT_LOG_WARNING(logger_,
         "%llu attempted to restore snapshot as leader; should never happen",
         id_);
     BecomeFollower(term_ + 1, kNone);
@@ -1685,7 +1637,7 @@ bool Raft::Restore(SnapshotPtr s) {
     }
   }
   if (!found) {
-    LOG_WARNING(
+    CRAFT_LOG_WARNING(logger_,
         "%llu attempted to restore snapshot but it is not in the ConfState; "
         "should never happen",
         id_);
@@ -1694,7 +1646,7 @@ bool Raft::Restore(SnapshotPtr s) {
 
   // Now go ahead and actually restore.
   if (raft_log_->MatchTerm(s->metadata().index(), s->metadata().term())) {
-    LOG_INFO(
+    CRAFT_LOG_INFO(logger_,
         "%x [commit: %llu, lastindex: %llu, lastterm: %llu] fast-forwarded "
         "commit "
         "to snapshot [index: %llu, term: %llu]",
@@ -1713,7 +1665,7 @@ bool Raft::Restore(SnapshotPtr s) {
   if (!status.IsOK()) {
     // This should never happen. Either there's a bug in our config change
     // handling or the client corrupted the conf change.
-    LOG_FATAL("unable to restore config %s", status.Str());
+    CRAFT_LOG_FATAL(logger_, "unable to restore config %s", status.Str());
     return false;
   }
 
@@ -1724,7 +1676,7 @@ bool Raft::Restore(SnapshotPtr s) {
   pr->MaybeUpdate(pr->Next() -
                   1);  // TODO(tbg): this is untested and likely unneeded
 
-  LOG_INFO(
+  CRAFT_LOG_INFO(logger_,
       "%llu [commit: %llu, lastindex: %llu, lastterm: %llu] restored snapshot "
       "[index: %llu, term: %llu]",
       id_, raft_log_->Committed(), raft_log_->LastIndex(),
@@ -1756,7 +1708,7 @@ raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2&& cc) {
     return changer.Simple(ccs);
   }();
   if (!status.IsOK()) {
-    LOG_FATAL("unexpected %s", status.Str());
+    CRAFT_LOG_FATAL(logger_, "unexpected %s", status.Str());
   }
   return SwitchToConfig(cfg, prs);
 }
@@ -1766,7 +1718,7 @@ raftpb::ConfState Raft::SwitchToConfig(const ProgressTracker::Config& cfg,
   trk_.SetConfig(cfg);
   trk_.SetProgressMap(prs);
 
-  LOG_INFO("%d switched to configuration %s", id_, cfg.String().c_str());
+  CRAFT_LOG_INFO(logger_, "%d switched to configuration %s", id_, cfg.String().c_str());
 
   auto cs = trk_.ConfState();
   auto pr = trk_.GetProgress(id_);
@@ -1819,7 +1771,7 @@ raftpb::ConfState Raft::SwitchToConfig(const ProgressTracker::Config& cfg,
 void Raft::LoadState(const raftpb::HardState& state) {
   if (state.commit() < raft_log_->Committed() ||
       state.commit() > raft_log_->LastIndex()) {
-    LOG_FATAL("%llu state.commit %llu is out of range [%llu, %llu]", id_,
+    CRAFT_LOG_FATAL(logger_, "%llu state.commit %llu is out of range [%llu, %llu]", id_,
               state.commit(), raft_log_->Committed(), raft_log_->LastIndex());
   }
   raft_log_->SetCommitted(state.commit());
@@ -1831,14 +1783,9 @@ bool Raft::PastElectionTimeout() const {
   return election_elapsed_ >= randomized_election_timeout_;
 }
 
-// TODO(juntaosu): 实现Util::random函数
 void Raft::ResetRandomizedElectionTimeout() {
-  std::random_device seed;
-  std::ranlux48 engine(seed());
-  std::uniform_int_distribution<int64_t> distrib(static_cast<int64_t>(0),
-                                                 election_timeout_-1);
-  auto random = distrib(engine);
-  randomized_election_timeout_ = election_timeout_ + random;
+  auto random = Util::Random(0, static_cast<int>(election_timeout_-1));
+  randomized_election_timeout_ = election_timeout_ + static_cast<int64_t>(random);
 }
 
 void Raft::SendTimeoutNow(uint64_t to) {
@@ -1863,7 +1810,6 @@ MsgPtr Raft::ResponseToReadIndexReq(MsgPtr req, uint64_t read_index) {
   m->set_type(raftpb::MessageType::MsgReadIndexResp);
   m->set_to(req->from());
   m->set_index(read_index);
-  // TODO(JT): move?
   m->mutable_entries()->CopyFrom(req->entries());
   return m;
 }
@@ -1919,7 +1865,7 @@ int64_t Raft::NumOfPendingConf(const EntryPtrs& ents) {
 
 void Raft::ReleasePendingReadIndexMessages() {
   if (!CommittedEntryinCurrentTerm()) {
-    LOG_ERROR(
+    CRAFT_LOG_ERROR(logger_,
         "pending MsgReadIndex should be released only after first commit in "
         "current term");
     return;

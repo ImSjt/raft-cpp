@@ -1,79 +1,82 @@
-#ifndef __CRAFT_COMMON_LOGGER_H__
-#define __CRAFT_COMMON_LOGGER_H__
-#include <cstdint>
-#include <functional>
-#include <cinttypes>
+// Copyright 2023 JT
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#pragma once
 
-#include "singleton.h"
-#include "fixed_buffer.h"
+#include <cstdint>
+#include <cstdarg>
 
 namespace craft {
 
-// logger singleton
-class Logger : public Singleton<Logger> {
- public:
-    // log level
-    enum LogLevel {
-        kTrace,
-        kDebug,
-        kInfo,
-        kWarn,
-        kError,
-        kFatal,
-        kNumLogLevel
-    };
-
-    // temporary buffer
-    using Buffer = FixedBuffer<kSmallBuffer>;
-
-    // log output callback
-    using LogOutputCb = std::function<void (const char* str, int32_t len, bool fatal)>;
-    
-    Logger();
-
-    void RegisterCallback(LogOutputCb log_output);
-
-    void SetLevel(LogLevel level) {
-        level_ = level;
-    }
-
-    LogLevel GetLevel() {
-        return level_;
-    }
-
-    void Write(LogLevel level, const char* file, int32_t line, const char* format, ...);
-
- private:
-    LogOutputCb log_output_;
-    LogLevel level_;
+enum LogLevel : uint8_t {
+  kDebug,
+  kInfo,
+  kWarning,
+  kError,
+  kFatal,
 };
 
-#define LOG_TRACE(format, ...) \
-    if (Logger::kTrace >= Logger::Instance().GetLevel()) \
-        Logger::Instance().Write(Logger::kTrace, __FILE__, __LINE__, format, ##__VA_ARGS__)
+class Logger {
+ public:
+  Logger(LogLevel log_level) : log_level_(log_level) {}
+  virtual ~Logger() = default;
 
-#define LOG_DEBUG(format, ...) \
-    if (Logger::kDebug >= Logger::Instance().GetLevel()) \
-        Logger::Instance().Write(Logger::kDebug, __FILE__, __LINE__, format, ##__VA_ARGS__)
+  virtual void Log(LogLevel, const char* format, ...);
+  virtual void Logv(LogLevel, const char* format, va_list ap) = 0;
 
-#define LOG_INFO(format, ...) \
-    if (Logger::kInfo >= Logger::Instance().GetLevel()) \
-        Logger::Instance().Write(Logger::kInfo, __FILE__, __LINE__, format, ##__VA_ARGS__)
+  LogLevel GetLogLevel() const { return log_level_; }
+  void SetLogLevel(LogLevel level) { log_level_ = level; }
 
-#define LOG_WARNING(format, ...) \
-    if (Logger::kWarn >= Logger::Instance().GetLevel()) \
-        Logger::Instance().Write(Logger::kWarn, __FILE__, __LINE__, format, ##__VA_ARGS__)
+ private:
+  LogLevel log_level_;
+};
 
-#define LOG_ERROR(format, ...) \
-    if (Logger::kError >= Logger::Instance().GetLevel()) \
-        Logger::Instance().Write(Logger::kError, __FILE__, __LINE__, format, ##__VA_ARGS__)
+class ConsoleLogger : public Logger {
+ public:
+  ConsoleLogger(LogLevel log_level = LogLevel::kDebug)
+    : Logger(log_level) {}
 
-#define LOG_FATAL(format, ...) \
-    if (Logger::kFatal >= Logger::Instance().GetLevel()) \
-        Logger::Instance().Write(Logger::kFatal, __FILE__, __LINE__, format, ##__VA_ARGS__)
+  void Logv(LogLevel level, const char* format, va_list ap) override;
 
-}; // namespace craft
+ private:
+  const char* GetPrefix(LogLevel level);
+};
 
-// #define LOG_TRACE std::cout << "[ERROR] " << __FILE__ << ":" << __LINE__ << 
+#define LOG_TRACE(format, ...)
 
-#endif // __CRAFT_COMMON_LOGGER_H__
+#define LOG_DEBUG(format, ...)
+
+#define LOG_INFO(format, ...)
+
+#define LOG_WARNING(format, ...)
+
+#define LOG_ERROR(format, ...)
+
+#define LOG_FATAL(format, ...)
+
+#define CRAFT_LOG_DEBUG(logger, format, ...) \
+  logger->Log(LogLevel::kDebug, format, ##__VA_ARGS__)
+
+#define CRAFT_LOG_INFO(logger, format, ...) \
+  logger->Log(LogLevel::kInfo, format, ##__VA_ARGS__)
+
+#define CRAFT_LOG_WARNING(logger, format, ...) \
+  logger->Log(LogLevel::kWarning, format, ##__VA_ARGS__)
+
+#define CRAFT_LOG_ERROR(logger, format, ...) \
+  logger->Log(LogLevel::kError, format, ##__VA_ARGS__)
+
+#define CRAFT_LOG_FATAL(logger, format, ...) \
+  logger->Log(LogLevel::kFatal, format, ##__VA_ARGS__)
+
+}  // namespace craft
