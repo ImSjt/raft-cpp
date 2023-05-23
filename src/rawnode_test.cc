@@ -15,10 +15,10 @@
 // limitations under the License.
 
 #include "gtest/gtest.h"
-#include "raft_test_util.h"
-#include "rawnode.h"
-#include "util.h"
-#include "raftpb/confstate.h"
+#include "src/raft_test_util.h"
+#include "src/rawnode.h"
+#include "src/util.h"
+#include "src/raftpb/confstate.h"
 
 bool confstateEqual(const raftpb::ConfState& cs1, const raftpb::ConfState& cs2) {
   auto c_cs1 = cs1;
@@ -48,7 +48,7 @@ bool confstateEqual(const raftpb::ConfState& cs1, const raftpb::ConfState& cs2) 
 TEST(RawNode, Step) {
   // raftpb::MessageType
   for (int i = raftpb::MessageType_MIN; i <= raftpb::MessageType_MAX; i++) {
-    auto s = std::make_shared<craft::MemoryStorage>();
+    auto s = std::make_shared<craft::MemoryStorage>(std::make_shared<craft::ConsoleLogger>());
     raftpb::HardState hs;
     hs.set_term(1);
     hs.set_commit(1);
@@ -220,7 +220,7 @@ TEST(RawNode, ProposeAndConfChange) {
     ASSERT_TRUE(confstateEqual(*cs, tt.exp));
 
     uint64_t maybe_plus_one = 0;
-    auto [auto_leave, ok2] = craft::EnterJoint(tt.cc.AsV2());
+    auto [auto_leave, ok2] = craft::EnterJoint(std::make_shared<craft::ConsoleLogger>(), tt.cc.AsV2());
     if (ok2 && auto_leave) {
       // If this is an auto-leaving joint conf change, it will have
       // appended the entry that auto-leaves, so add one to the last
@@ -514,7 +514,7 @@ TEST(RawNode, Start) {
   };
   want.must_sync = true;
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto storage = std::make_shared<craft::MemoryStorage>(std::make_shared<craft::ConsoleLogger>());
   storage->GetEntry(0)->set_index(1);
 
 	// TODO(tbg): this is a first prototype of what bootstrapping could look
@@ -634,7 +634,8 @@ TEST(RawNode, RestartFromSnapshot) {
     .must_sync = false,
   };
 
-  auto s = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto s = std::make_shared<craft::MemoryStorage>(logger);
   s->SetHardState(st);
   s->ApplySnapshot(snap);
   s->Append(entries);

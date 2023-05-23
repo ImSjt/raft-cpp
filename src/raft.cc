@@ -17,11 +17,11 @@
 
 #include <random>
 
-#include "confchange/restore.h"
-#include "logger.h"
-#include "raftpb/confchange.h"
-#include "raftpb/confstate.h"
-#include "util.h"
+#include "src/confchange/restore.h"
+#include "src/logger.h"
+#include "src/raftpb/confchange.h"
+#include "src/raftpb/confstate.h"
+#include "src/util.h"
 
 namespace craft {
 
@@ -202,7 +202,7 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
   }
 
   auto raft_log =
-      RaftLog::NewWithSize(c.storage, c.max_committed_size_per_ready);
+      RaftLog::NewWithSize(c.logger, c.storage, c.max_committed_size_per_ready);
   auto [hs, cs, s2] = c.storage->InitialState();
   if (!s2.IsOK()) {
     CRAFT_LOG_FATAL(c.logger, "state is invalied, err:%s", s2.Str());
@@ -212,7 +212,7 @@ std::unique_ptr<Raft> Raft::New(Raft::Config& c) {
   auto r = std::make_unique<Raft>(c, std::move(raft_log));
 
   auto [cfg, prs, s3] =
-      ::craft::Restore(Changer(r->GetTracker(), last_index), cs);
+      ::craft::Restore(Changer(c.logger, r->GetTracker(), last_index), cs);
   if (!s3.IsOK()) {
     CRAFT_LOG_FATAL(c.logger, "restore error, err:%s", s3.Str());
   }
@@ -261,7 +261,7 @@ Raft::Raft(const Config& c, std::unique_ptr<RaftLog>&& raft_log)
       lead_transferee_(kNone),
       pending_conf_index_(0),
       uncommitted_size_(0),
-      read_only_(std::make_unique<ReadOnly>(c.read_only_option)),
+      read_only_(std::make_unique<ReadOnly>(c.logger, c.read_only_option)),
       election_elapsed_(0),
       heartbeat_elapsed_(0),
       check_quorum_(c.check_quorum),
@@ -489,7 +489,7 @@ void Raft::Reset(uint64_t term) {
   trk_.ResetVotes();
   trk_.Visit([this](uint64_t id, ProgressPtr& pr) {
     pr =
-        std::make_shared<Progress>(GetRaftLog()->LastIndex() + 1, 0,
+        std::make_shared<Progress>(logger_, GetRaftLog()->LastIndex() + 1, 0,
                                    GetTracker().MaxInflight(), pr->IsLearner(), false);
     if (id == ID()) {
       pr->SetMatch(GetRaftLog()->LastIndex());
@@ -498,7 +498,7 @@ void Raft::Reset(uint64_t term) {
 
   pending_conf_index_ = 0;
   uncommitted_size_ = 0;
-  read_only_ = std::make_unique<ReadOnly>(read_only_->Option());
+  read_only_ = std::make_unique<ReadOnly>(logger_, read_only_->Option());
 }
 
 bool Raft::AppendEntry(const EntryPtr& e) {
@@ -707,7 +707,7 @@ void Raft::Campaign(CampaignType t) {
   }
 
   auto [granted, rejected, res] =
-      Poll(id_, Util::VoteRespMsgType(vote_msg), true);
+      Poll(id_, Util::VoteRespMsgType(logger_, vote_msg), true);
   if (res == VoteState::kVoteWon) {
     // We won the election after voting for ourselves (which must mean that
     // this is a single-node cluster). Advance to the next state.
@@ -910,7 +910,7 @@ Status Raft::Step(MsgPtr m) {
       auto msg = std::make_shared<raftpb::Message>();
       msg->set_to(m->from());
       msg->set_term(m->term());
-      msg->set_type(Util::VoteRespMsgType(m->type()));
+      msg->set_type(Util::VoteRespMsgType(logger_, m->type()));
       Send(msg);
       if (m->type() == raftpb::MessageType::MsgVote) {
         // Only record real votes.
@@ -927,7 +927,7 @@ Status Raft::Step(MsgPtr m) {
       auto msg = std::make_shared<raftpb::Message>();
       msg->set_to(m->from());
       msg->set_term(term_);
-      msg->set_type(Util::VoteRespMsgType(m->type()));
+      msg->set_type(Util::VoteRespMsgType(logger_, m->type()));
       msg->set_reject(true);
       Send(msg);
     }
@@ -1661,7 +1661,7 @@ bool Raft::Restore(SnapshotPtr s) {
   // Reset the configuration and add the (potentially updated) peers in anew.
   trk_ = ProgressTracker(trk_.MaxInflight());
   auto [cfg, prs, status] =
-      ::craft::Restore(Changer(trk_, raft_log_->LastIndex()), cs);
+      ::craft::Restore(Changer(logger_, trk_, raft_log_->LastIndex()), cs);
   if (!status.IsOK()) {
     // This should never happen. Either there's a bug in our config change
     // handling or the client corrupted the conf change.
@@ -1691,7 +1691,7 @@ bool Raft::Promotable() {
 
 raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2&& cc) {
   auto [cfg, prs, status] = [this, &cc]() {
-    auto changer = Changer(trk_, raft_log_->LastIndex());
+    auto changer = Changer(logger_, trk_, raft_log_->LastIndex());
     if (LeaveJoint(cc)) {
       return changer.LeaveJoint();
     }
@@ -1701,7 +1701,7 @@ raftpb::ConfState Raft::ApplyConfChange(raftpb::ConfChangeV2&& cc) {
       ccs.emplace_back(cc.changes(i));
     }
 
-    auto [auto_leave, ok] = EnterJoint(cc);
+    auto [auto_leave, ok] = EnterJoint(logger_, cc);
     if (ok) {
       return changer.EnterJoint(auto_leave, ccs);
     }

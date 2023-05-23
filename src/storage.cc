@@ -13,17 +13,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "storage.h"
+#include "src/storage.h"
 
 #include <algorithm>
 #include <cassert>
 
-#include "logger.h"
-#include "util.h"
+#include "src/logger.h"
+#include "src/util.h"
 
 namespace craft {
 
-MemoryStorage::MemoryStorage() {
+MemoryStorage::MemoryStorage(std::shared_ptr<Logger> logger)
+  : logger_(logger) {
   // When starting from scratch populate the list with a dummy entry at term
   // zero.
   raftpb::Entry entry;
@@ -63,7 +64,7 @@ MemoryStorage::Entries(uint64_t lo, uint64_t hi, uint64_t max_size) {
 
   if (hi > LastIndexUnSafe() + 1) {
     // panic
-    LOG_FATAL("entries' hi(%d) is out of bound lastindex(%d)", hi,
+    CRAFT_LOG_FATAL(logger_, "entries' hi(%d) is out of bound lastindex(%d)", hi,
               LastIndexUnSafe());
   }
 
@@ -145,7 +146,7 @@ std::tuple<SnapshotPtr, Status> MemoryStorage::CreateSnapshot(
   uint64_t offset = ents_[0]->index();
   if (i > LastIndexUnSafe()) {
     // panic
-    LOG_FATAL("snapshot %d is out of bound lastindex(%d)", i,
+    CRAFT_LOG_FATAL(logger_, "snapshot %d is out of bound lastindex(%d)", i,
               LastIndexUnSafe());
   }
 
@@ -170,7 +171,7 @@ Status MemoryStorage::Compact(uint64_t compact_index) {
 
   if (compact_index > LastIndexUnSafe()) {
     // panic
-    LOG_FATAL("compact %d is out of bound lastindex(%d)", compact_index,
+    CRAFT_LOG_FATAL(logger_, "compact %d is out of bound lastindex(%d)", compact_index,
               LastIndexUnSafe());
   }
 
@@ -221,7 +222,7 @@ Status MemoryStorage::Append(EntryPtrs entries) {
     ents_.insert(ents_.end(), entries.begin(), entries.end());
   } else {  // case5
     // panic
-    LOG_FATAL("missing log entry [last: %d, append at: %d]", LastIndexUnSafe(),
+    CRAFT_LOG_FATAL(logger_, "missing log entry [last: %d, append at: %d]", LastIndexUnSafe(),
               entries[0]->index());
   }
   return Status::OK();

@@ -22,9 +22,9 @@
 #include <set>
 #include <sstream>
 
-#include "quorum/joint.h"
-#include "raftpb/raft.pb.h"
-#include "tracker/progress.h"
+#include "src/quorum/joint.h"
+#include "src/raftpb/raft.pb.h"
+#include "src/tracker/progress.h"
 
 namespace craft {
 

@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "gtest/gtest.h"
-#include "storage.h"
+#include "src/storage.h"
 
 static craft::EntryPtr makeEntry(uint64_t index, uint64_t term) {
   auto ent = std::make_shared<raftpb::Entry>();
@@ -80,7 +80,7 @@ TEST(MemoryStorage, Term) {
   };
 
   for (auto& tt : tests) {
-    craft::MemoryStorage s;
+    craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
     s.SetEntries(ents);
 
     auto [term, status] = s.Term(tt.index);
@@ -121,7 +121,7 @@ TEST(MemoryStorage, Entries) {
   };
 
   for (auto& tt : tests) {
-    craft::MemoryStorage s;
+    craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
     s.SetEntries(ents);
     auto [entries, status] = s.Entries(tt.lo, tt.hi, tt.max_size);
     ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
@@ -134,7 +134,7 @@ TEST(MemoryStorage, Entries) {
 
 TEST(MemoryStorage, LastIndex) {
   craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
-  craft::MemoryStorage s;
+  craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
   s.SetEntries(ents);
 
   auto [last, status] = s.LastIndex();
@@ -149,7 +149,7 @@ TEST(MemoryStorage, LastIndex) {
 
 TEST(MemoryStorage, FirstIndex) {
   craft::EntryPtrs ents = {makeEntry(3, 3), makeEntry(4, 4), makeEntry(5, 5)};
-  craft::MemoryStorage s;
+  craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
   s.SetEntries(ents);
 
   auto [first, status] = s.FirstIndex();
@@ -181,7 +181,7 @@ TEST(MemoryStorage, Compact) {
   };
 
   for (auto& tt : tests) {
-    craft::MemoryStorage s;
+    craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
     s.SetEntries(ents);
     auto status = s.Compact(tt.i);
     ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
@@ -223,7 +223,7 @@ TEST(MemoryStorage, CreateSnapshot) {
   };
 
   for (auto& tt : tests) {
-    craft::MemoryStorage s;
+    craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
     s.SetEntries(ents);
     auto [snap, status] = s.CreateSnapshot(tt.i, &cs, data);
 
@@ -272,7 +272,7 @@ TEST(MemoryStorage, Append) {
     };
 
   for (auto& tt : tests) {
-    craft::MemoryStorage s;
+    craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
     s.SetEntries(ents);
     auto status = s.Append(tt.entries);
     ASSERT_EQ(status.IsOK(), tt.wstatus.IsOK());
@@ -299,7 +299,7 @@ TEST(MemoryStorage, ApplySnapshot) {
     return snapshot;
   };
 
-  craft::MemoryStorage s;
+  craft::MemoryStorage s(std::make_shared<craft::ConsoleLogger>());
 
 	//Apply Snapshot successful
   auto status = s.ApplySnapshot(make_snapshot(4, 4));

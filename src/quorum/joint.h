@@ -19,7 +19,7 @@
 #include <set>
 #include <string>
 
-#include "quorum/majority.h"
+#include "src/quorum/majority.h"
 
 namespace craft {
 

@@ -19,6 +19,8 @@
 #include <memory>
 #include <vector>
 
+#include "src/logger.h"
+
 namespace craft {
 
 // Inflights limits the number of MsgApp (represented by the largest index
@@ -28,7 +30,8 @@ namespace craft {
 // ack is received.
 class Inflights {
  public:
-  Inflights(int64_t size) : start_(0), count_(0), size_(size) {}
+  Inflights(std::shared_ptr<Logger> logger, int64_t size)
+      : logger_(logger), start_(0), count_(0), size_(size) {}
 
   // Clone returns an *Inflights that is identical to but shares no memory with
   // the receiver.
@@ -78,6 +81,7 @@ class Inflights {
   void Grow();
 
  private:
+  std::shared_ptr<Logger> logger_;
   // the starting index in the buffer
   int64_t start_;
   // number of inflights in the buffer

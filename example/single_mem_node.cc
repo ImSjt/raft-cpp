@@ -4,7 +4,7 @@
 #include <any>
 #include <functional>
 
-#include "rawnode.h"
+#include "src/rawnode.h"
 #include "blockingconcurrentqueue.h"
 
 struct Peer {
@@ -58,15 +58,15 @@ static void onReady(Peer& peer, std::map<std::string, std::function<void()>>& wa
   peer.rn->Advance(rd);
 }
 
-static void sendPropose(moodycamel::BlockingConcurrentQueue<std::any>& q) {
+static void sendPropose(std::shared_ptr<craft::Logger> logger, moodycamel::BlockingConcurrentQueue<std::any>& q) {
   int i = 0;
   while (1) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    q.enqueue(Request{.id = ++i, .cb = [i]() {
-      std::cout << i << " has been applied, responding to the client." << std::endl;
+    q.enqueue(Request{.id = ++i, .cb = [i, logger]() {
+      CRAFT_LOG_DEBUG(logger, "%d has been applied, responding to the client.", i);
     }});
-    q.enqueue(Request{.id = ++i, .cb = [i]() {
-      std::cout << i << " has been applied, responding to the client." << std::endl;
+    q.enqueue(Request{.id = ++i, .cb = [i, logger]() {
+      CRAFT_LOG_DEBUG(logger, "%d has been applied, responding to the client.", i);
     }});
   }
 }
@@ -74,7 +74,8 @@ static void sendPropose(moodycamel::BlockingConcurrentQueue<std::any>& q) {
 int main(int argc, char* argv[]) {
   std::map<std::string, std::function<void()>> waiters;
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   craft::Raft::Config cfg {
     .id = 1,
     .election_tick = 10,
@@ -82,6 +83,7 @@ int main(int argc, char* argv[]) {
     .storage = storage,
     .max_size_per_msg = 1024 * 1024 * 1024,
     .max_inflight_msgs = 256,
+    .logger = logger,
   };
   Peer peer {
     .rn = craft::RawNode::Start(cfg, {craft::Peer{1}}),
@@ -89,8 +91,8 @@ int main(int argc, char* argv[]) {
   };
 
   moodycamel::BlockingConcurrentQueue<std::any> q;
-  auto thread = std::thread([&q]() {
-    sendPropose(q);
+  auto thread = std::thread([logger, &q]() {
+    sendPropose(logger, q);
   });
 
   int64_t heartbeat_timeout = 100;

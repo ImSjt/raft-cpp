@@ -13,7 +13,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "quorum/majority.h"
+#include "src/quorum/majority.h"
 
 #include <algorithm>
 #include <memory>
@@ -113,10 +113,10 @@ VoteState MajorityConfig::VoteResult(const std::map<uint64_t, bool>& votes) cons
   }
 
   size_t q = Size() / 2 + 1;
-  if (voted_cnt >= q) {
+  if (voted_cnt >= static_cast<int>(q)) {
     return VoteState::kVoteWon;
   }
-  if (voted_cnt + missing >= q) {
+  if (voted_cnt + missing >= static_cast<int>(q)) {
     return VoteState::kVotePending;
   }
   return VoteState::kVoteLost;

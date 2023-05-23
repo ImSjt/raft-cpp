@@ -19,7 +19,7 @@
 #include <memory>
 
 #include "gtest/gtest.h"
-#include "quorum/joint.h"
+#include "src/quorum/joint.h"
 
 TEST(JointConfig, CommittedIndex) {
   struct Test {

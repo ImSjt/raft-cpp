@@ -11,12 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "raftpb/confchange.h"
+#include "src/raftpb/confchange.h"
 
 #include <sstream>
 
-#include "logger.h"
-#include "util.h"
+#include "src/logger.h"
+#include "src/util.h"
 
 namespace craft {
 
@@ -55,7 +55,7 @@ std::tuple<raftpb::EntryType, std::string, bool> ConfChangeI::Marshal() const {
   return std::make_tuple(type, std::move(ccdata), res);
 }
 
-std::tuple<bool, bool> EnterJoint(const raftpb::ConfChangeV2& cc) {
+std::tuple<bool, bool> EnterJoint(std::shared_ptr<Logger> logger, const raftpb::ConfChangeV2& cc) {
 	// NB: in theory, more config changes could qualify for the "simple"
 	// protocol but it depends on the config on top of which the changes apply.
 	// For example, adding two learners is not OK if both nodes are part of the
@@ -76,7 +76,7 @@ std::tuple<bool, bool> EnterJoint(const raftpb::ConfChangeV2& cc) {
       case raftpb::ConfChangeTransition::ConfChangeTransitionJointExplicit:
         break;
       default:
-        LOG_FATAL("unknown transition: %d", static_cast<uint32_t>(cc.transition()));
+        CRAFT_LOG_FATAL(logger, "unknown transition: %d", static_cast<uint32_t>(cc.transition()));
     }
     return std::make_tuple(auto_leave, true);
   }

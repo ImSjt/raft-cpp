@@ -55,6 +55,8 @@ execute_process(
 
 list(APPEND EXTRA_LIBS "${PROTOBUF_LIBRARY}")
 list(APPEND EXTRA_INCLUDES "${PROJECT_SOURCE_DIR}/src" "${Protobuf_INCLUDE_DIRS}")
+message("${PROTOBUF_LIBRARY}")
+message("${Protobuf_INCLUDE_DIRS}")
 
 include_directories("${PROJECT_SOURCE_DIR}/include")
 include_directories("${EXTRA_INCLUDES}")
@@ -69,7 +71,6 @@ target_sources(craft
     "src/confchange/restore.h"
     "src/confchange/restore.h"
     "src/define.h"
-    "src/fixed_buffer.h"
     "src/log_unstable.cc"
     "src/log_unstable.h"
     "src/log.cc"
@@ -87,7 +88,6 @@ target_sources(craft
     "src/raftpb/confstate.h"
     "src/raftpb/confchange.cc"
     "src/raftpb/confchange.h"
-    "src/singleton.h"
     "src/status.cc"
     "src/status.h"
     "src/storage.cc"
@@ -115,11 +115,11 @@ target_link_libraries (craft glog::glog)
 # add_executable(test_bug "src/raft/main.cc")
 # target_link_libraries(test_bug craft)
 
-# add_executable(single_mem_node example/single_mem_node.cc)
-# target_link_libraries(single_mem_node craft concurrentqueue)
+add_executable(single_mem_node example/single_mem_node.cc)
+target_link_libraries(single_mem_node craft concurrentqueue)
 
-add_executable(multi_mem_node example/multi_mem_node.cc)
-target_link_libraries(multi_mem_node craft concurrentqueue)
+# add_executable(multi_mem_node example/multi_mem_node.cc)
+# target_link_libraries(multi_mem_node craft concurrentqueue)
 
 function(craft_test test_file)
     get_filename_component(test_target_name "${test_file}" NAME_WE)

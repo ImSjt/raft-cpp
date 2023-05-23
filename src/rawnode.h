@@ -18,8 +18,8 @@
 #include <memory>
 #include <optional>
 
-#include "raft.h"
-#include "raftpb/confchange.h"
+#include "src/raft.h"
+#include "src/raftpb/confchange.h"
 
 namespace craft {
 

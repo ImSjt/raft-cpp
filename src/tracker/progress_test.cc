@@ -17,12 +17,12 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "tracker/progress.h"
+#include "src/tracker/progress.h"
 
 TEST(Progress, String) {
-  auto ins = std::make_unique<craft::Inflights>(1);
+  auto ins = std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 1);
   ins->Add(123);
-  craft::Progress p;
+  craft::Progress p(std::make_shared<craft::ConsoleLogger>());
   p.SetMatch(1);
   p.SetNext(2);
   p.SetState(craft::StateType::kSnapshot);
@@ -56,10 +56,10 @@ TEST(Progress, IsPaused) {
   };
 
   for (auto& test : tests) {
-    craft::Progress p;
+    craft::Progress p(std::make_shared<craft::ConsoleLogger>());
     p.SetState(test.state);
     p.SetProbeSent(test.paused);
-    p.SetInflights(std::make_unique<craft::Inflights>(256));
+    p.SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
     bool g = p.IsPaused();
     ASSERT_EQ(g, test.w);
   }
@@ -68,8 +68,8 @@ TEST(Progress, IsPaused) {
 // TestProgressResume ensures that MaybeUpdate and MaybeDecrTo will reset
 // ProbeSent.
 TEST(Progress, Resume) {
-  craft::Progress p;
-  p.SetInflights(std::make_unique<craft::Inflights>(256));
+  craft::Progress p(std::make_shared<craft::ConsoleLogger>());
+  p.SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
   p.SetNext(2);
   p.SetMatch(0);
   p.SetProbeSent(true);
@@ -89,11 +89,11 @@ TEST(Progress, BecomeProbe) {
   uint64_t match = 1;
   std::vector<Test> tests;
   {
-    auto p = std::make_shared<craft::Progress>();
+    auto p = std::make_shared<craft::Progress>(std::make_shared<craft::ConsoleLogger>());
     p->SetState(craft::StateType::kReplicate);
     p->SetMatch(match);
     p->SetNext(5);
-    p->SetInflights(std::make_unique<craft::Inflights>(256));
+    p->SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
     tests.emplace_back(Test{
       .p = p,
       .wnext = 2,
@@ -101,12 +101,12 @@ TEST(Progress, BecomeProbe) {
   }
   {
     // snapshot finish
-    auto p = std::make_shared<craft::Progress>();
+    auto p = std::make_shared<craft::Progress>(std::make_shared<craft::ConsoleLogger>());
     p->SetState(craft::StateType::kSnapshot);
     p->SetMatch(match);
     p->SetNext(5);
     p->SetPendingSnapshot(10);
-    p->SetInflights(std::make_unique<craft::Inflights>(256));
+    p->SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
     tests.emplace_back(Test{
       .p = p,
       .wnext = 11,
@@ -115,12 +115,12 @@ TEST(Progress, BecomeProbe) {
 
   {
     // snapshot failure
-    auto p = std::make_shared<craft::Progress>();
+    auto p = std::make_shared<craft::Progress>(std::make_shared<craft::ConsoleLogger>());
     p->SetState(craft::StateType::kSnapshot);
     p->SetMatch(match);
     p->SetNext(5);
     p->SetPendingSnapshot(0);
-    p->SetInflights(std::make_unique<craft::Inflights>(256));
+    p->SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
     tests.emplace_back(Test{
       .p = p,
       .wnext = 2,
@@ -136,31 +136,31 @@ TEST(Progress, BecomeProbe) {
 }
 
 TEST(Progress, BecomeReplicate) {
-  craft::Progress p;
+  craft::Progress p(std::make_shared<craft::ConsoleLogger>());
   p.SetState(craft::StateType::kProbe);
   p.SetMatch(1);
   p.SetNext(5);
-  p.SetInflights(std::make_unique<craft::Inflights>(256));
+  p.SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
 
   p.BecomeReplicate();
 
   ASSERT_EQ(p.State(), craft::StateType::kReplicate);
-  ASSERT_EQ(p.Match(), 1);
+  ASSERT_EQ(p.Match(), static_cast<uint64_t>(1));
   ASSERT_EQ(p.Next(), p.Match() + 1);
 }
 
 TEST(Progress, BecomeSnapshot) {
-  craft::Progress p;
+  craft::Progress p(std::make_shared<craft::ConsoleLogger>());
   p.SetState(craft::StateType::kProbe);
   p.SetMatch(1);
   p.SetNext(5);
-  p.SetInflights(std::make_unique<craft::Inflights>(256));
+  p.SetInflights(std::make_unique<craft::Inflights>(std::make_shared<craft::ConsoleLogger>(), 256));
 
   p.BecomeSnapshot(10);
 
   ASSERT_EQ(p.State(), craft::StateType::kSnapshot);
-  ASSERT_EQ(p.Match(), 1);
-  ASSERT_EQ(p.PendingSnapshot(), 10);
+  ASSERT_EQ(p.Match(), static_cast<uint64_t>(1));
+  ASSERT_EQ(p.PendingSnapshot(), static_cast<uint64_t>(10));
 }
 
 TEST(Progress, MaybeUpdate) {
@@ -180,7 +180,7 @@ TEST(Progress, MaybeUpdate) {
 		{prev_m + 2, prev_m + 2, prev_n + 1, true}, // increase match, next
   };
   for (auto& tt : tests) {
-    craft::Progress p;
+    craft::Progress p(std::make_shared<craft::ConsoleLogger>());
     p.SetMatch(prev_m);
     p.SetNext(prev_n);
     auto ok = p.MaybeUpdate(tt.update);
@@ -245,7 +245,7 @@ TEST(Progress, MaybeDecrTo) {
 		},
   };
   for (auto& tt : tests) {
-    craft::Progress p;
+    craft::Progress p(std::make_shared<craft::ConsoleLogger>());
     p.SetState(tt.state);
     p.SetMatch(tt.m);
     p.SetNext(tt.n);

@@ -15,7 +15,7 @@
 // limitations under the License.
 
 #include "gtest/gtest.h"
-#include "raft_test_util.h"
+#include "src/raft_test_util.h"
 
 static craft::SnapshotPtr makeTestingSnap() {
   auto snap = std::make_shared<raftpb::Snapshot>();

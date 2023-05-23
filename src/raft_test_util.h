@@ -17,8 +17,8 @@
 
 #include <random>
 
-#include "raft.h"
-#include "raftpb/confchange.h"
+#include "src/raft.h"
+#include "src/raftpb/confchange.h"
 
 class Message {
  public:

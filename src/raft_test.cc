@@ -18,11 +18,11 @@
 #include <random>
 
 #include "gtest/gtest.h"
-#include "raft.h"
-#include "rawnode.h"
-#include "util.h"
-#include "raftpb/confchange.h"
-#include "raft_test_util.h"
+#include "src/raft.h"
+#include "src/rawnode.h"
+#include "src/util.h"
+#include "src/raftpb/confchange.h"
+#include "src/raft_test_util.h"
 
 TEST(Raft, ProgressLeader) {
   auto r = newTestRaft(1, 5, 1, newTestMemoryStorage({withPeers({1, 2})}));
@@ -452,7 +452,7 @@ static void testVoteFromAnyState(raftpb::MessageType vt) {
     ASSERT_TRUE(s.IsOK());
     ASSERT_EQ(r->Get()->Msgs().size(), static_cast<size_t>(1));
     auto resp = r->Get()->Msgs()[0];
-    ASSERT_EQ(resp->type(), craft::Util::VoteRespMsgType(vt));
+    ASSERT_EQ(resp->type(), craft::Util::VoteRespMsgType(std::make_shared<craft::ConsoleLogger>(), vt));
     ASSERT_FALSE(resp->reject());
 
 		// If this was a real vote, we reset our state and term.
@@ -679,9 +679,10 @@ TEST(Raft, DuelingCandidates) {
 	// 3 will be follower again since both 1 and 2 rejects its vote request since 3 does not have a long enough log
   nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)()});
-  auto wlog = std::make_shared<craft::RaftLog>(storage);
+  auto wlog = std::make_shared<craft::RaftLog>(logger, storage);
   wlog->SetCommitted(1);
   wlog->GetUnstable().SetOffset(2);
 
@@ -694,7 +695,7 @@ TEST(Raft, DuelingCandidates) {
   std::vector<Test> tests = {
     {a, craft::RaftStateType::kFollower, 2, wlog},
     {b, craft::RaftStateType::kFollower, 2, wlog},
-    {c, craft::RaftStateType::kFollower, 2, craft::RaftLog::New(std::make_shared<craft::MemoryStorage>())},
+    {c, craft::RaftStateType::kFollower, 2, craft::RaftLog::New(logger, std::make_shared<craft::MemoryStorage>(logger))},
   };
   for (size_t i = 0; i < tests.size(); i++) {
     auto& tt = tests[i];
@@ -738,9 +739,10 @@ TEST(Raft, DuelingPreCandidates) {
 	// With PreVote, it does not disrupt the leader.
   nt->Send({NEW_MSG().From(3).To(3).Type(raftpb::MessageType::MsgHup)()});
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)()});
-  auto wlog = std::make_shared<craft::RaftLog>(storage);
+  auto wlog = std::make_shared<craft::RaftLog>(logger, storage);
   wlog->SetCommitted(1);
   wlog->GetUnstable().SetOffset(2);
   struct Test {
@@ -752,7 +754,7 @@ TEST(Raft, DuelingPreCandidates) {
   std::vector<Test> tests = {
     {a, craft::RaftStateType::kLeader, 1, wlog},
     {b, craft::RaftStateType::kFollower, 1, wlog},
-    {c, craft::RaftStateType::kFollower, 1, craft::RaftLog::New(std::make_shared<craft::MemoryStorage>())},
+    {c, craft::RaftStateType::kFollower, 1, craft::RaftLog::New(logger, std::make_shared<craft::MemoryStorage>(logger))},
   };
   for (size_t i = 0; i < tests.size(); i++) {
     auto& tt = tests[i];
@@ -787,9 +789,10 @@ TEST(Raft, CandidateConcede) {
   ASSERT_EQ(a->Get()->State(), craft::RaftStateType::kFollower);
   ASSERT_EQ(a->Get()->Term(), static_cast<uint64_t>(1));
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1).Data(data)()});
-  auto l = std::make_shared<craft::RaftLog>(storage);
+  auto l = std::make_shared<craft::RaftLog>(logger, storage);
   l->SetCommitted(2);
   l->GetUnstable().SetOffset(3);
   auto want_log = raftlogString(l.get());
@@ -827,11 +830,12 @@ TEST(Raft, OldMessages) {
   // commit a new entry
   tt->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})()});
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)(),
                        NEW_ENT().Index(2).Term(2)(), NEW_ENT().Index(3).Term(3)(),
                        NEW_ENT().Index(4).Term(3).Data("somedata")()});
-  auto ilog = std::make_shared<craft::RaftLog>(storage);
+  auto ilog = std::make_shared<craft::RaftLog>(logger, storage);
   ilog->SetCommitted(4);
   ilog->GetUnstable().SetOffset(5);
   auto base = raftlogString(ilog.get());
@@ -856,6 +860,7 @@ TEST(Raft, Propposal) {
     {NetWork::New({nullptr, BlackHole::New(), BlackHole::New(), nullptr, nullptr}), true},
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (size_t i = 0; i < tests.size(); i++) {
     auto& tt = tests[i];
     std::string data = "somedata";
@@ -864,11 +869,11 @@ TEST(Raft, Propposal) {
     tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgHup)()});
     tt.network->Send({NEW_MSG().From(1).To(1).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data(data)()})()});
 
-    std::shared_ptr<craft::RaftLog> want_log = craft::RaftLog::New(std::make_shared<craft::MemoryStorage>());
+    std::shared_ptr<craft::RaftLog> want_log = craft::RaftLog::New(logger, std::make_shared<craft::MemoryStorage>(logger));
     if (tt.success) {
-      auto storage = std::make_shared<craft::MemoryStorage>();
+      auto storage = std::make_shared<craft::MemoryStorage>(logger);
       storage->SetEntries({NEW_ENT().Index(0).Term(0)(), NEW_ENT().Index(1).Term(1)(), NEW_ENT().Index(2).Term(1).Data("somedata")()});
-      want_log = std::make_shared<craft::RaftLog>(storage);
+      want_log = std::make_shared<craft::RaftLog>(logger, storage);
       want_log->SetCommitted(2);
       want_log->GetUnstable().SetOffset(3);
     }
@@ -896,6 +901,7 @@ TEST(Raft, ProposalByProxy) {
     {NetWork::New({nullptr, nullptr, BlackHole::New()})},
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (size_t i = 0; i < tests.size(); i++) {
     auto& tt = tests[i];
     // promote 1 the leader
@@ -904,11 +910,11 @@ TEST(Raft, ProposalByProxy) {
     // propose via follower
     tt.network->Send({NEW_MSG().From(2).To(2).Type(raftpb::MessageType::MsgProp).Entries({NEW_ENT().Data("somedata")()})()});
 
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->SetEntries({NEW_ENT().Index(0).Term(0)(),
                          NEW_ENT().Index(1).Term(1)(),
                          NEW_ENT().Index(2).Term(1).Data("somedata")()});
-    auto want_log = std::make_shared<craft::RaftLog>(storage);
+    auto want_log = std::make_shared<craft::RaftLog>(logger, storage);
     want_log->SetCommitted(2);
     want_log->GetUnstable().SetOffset(3);
     auto base = raftlogString(want_log.get());
@@ -1243,6 +1249,7 @@ static void testRecvMsgVote(raftpb::MessageType msg_type) {
 		{craft::RaftStateType::kPreCandidate, 3, 3, 1, true},
 		{craft::RaftStateType::kCandidate, 3, 3, 1, true},
   };
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
     auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1})}));
     sm->Get()->SetState(tt.state);
@@ -1254,11 +1261,11 @@ static void testRecvMsgVote(raftpb::MessageType msg_type) {
       sm->Get()->SetStep(std::bind(&craft::Raft::StepLeader, sm->Get(), std::placeholders::_1));
     }
     sm->Get()->SetVote(tt.vote_for);
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->SetEntries({NEW_ENT()(),
                          NEW_ENT().Index(1).Term(2)(),
                          NEW_ENT().Index(2).Term(2)()});
-    auto want_log = std::make_shared<craft::RaftLog>(storage);
+    auto want_log = std::make_shared<craft::RaftLog>(logger, storage);
     want_log->GetUnstable().SetOffset(3);
     *(sm->Get()->GetRaftLog()) = *want_log;
 
@@ -1276,7 +1283,7 @@ static void testRecvMsgVote(raftpb::MessageType msg_type) {
 
     auto msgs = sm->ReadMessages();
     ASSERT_EQ(msgs.size(), static_cast<size_t>(1));
-    ASSERT_EQ(msgs[0]->type(), craft::Util::VoteRespMsgType(msg_type));
+    ASSERT_EQ(msgs[0]->type(), craft::Util::VoteRespMsgType(logger, msg_type));
     ASSERT_EQ(msgs[0]->reject(), tt.wreject);
   }
 }
@@ -1912,13 +1919,14 @@ TEST(Raft, LeaderAppResp) {
 		{2, false, 2, 4, 2, 2, 2}, // accept resp; leader commits; broadcast with commit index
 		{0, false, 0, 3, 0, 0, 0}, // ignore heartbeat replies
   };
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
 		// sm term is 1 after it becomes the leader.
 		// thus the last log term must be 1 to be committed.
     auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->SetEntries({NEW_ENT()(), NEW_ENT().Index(1).Term(0)(), NEW_ENT().Index(2).Term(1)()});
-    auto wlog = std::make_shared<craft::RaftLog>(storage);
+    auto wlog = std::make_shared<craft::RaftLog>(logger, storage);
     wlog->GetUnstable().SetOffset(3);
     *sm->Get()->GetRaftLog() = *wlog;
 
@@ -1958,7 +1966,8 @@ TEST(Raft, BcastBeat) {
   s->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(1);
   s->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(2);
   s->mutable_metadata()->mutable_conf_state()->mutable_voters()->Add(3);
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->ApplySnapshot(s);
   auto sm = newTestRaft(1, 10, 1, storage);
   sm->Get()->SetTerm(1);
@@ -2005,11 +2014,12 @@ TEST(Raft, RecvMsgBeat) {
 		{craft::RaftStateType::kCandidate, 0},
 		{craft::RaftStateType::kFollower, 0},
   };
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
     auto sm = newTestRaft(1, 10, 1, newTestMemoryStorage({withPeers({1, 2, 3})}));
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->SetEntries({NEW_ENT()(), NEW_ENT().Index(1).Term(0)(), NEW_ENT().Index(2).Term(1)()});
-    auto wlog = std::make_shared<craft::RaftLog>(storage);
+    auto wlog = std::make_shared<craft::RaftLog>(logger, storage);
     *sm->Get()->GetRaftLog() = *wlog;
     sm->Get()->SetTerm(1);
     sm->Get()->SetState(tt.state);
@@ -3594,13 +3604,14 @@ TEST(Raft, FastLogRejection) {
       2, 1, 2, 1,
     },
   };
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto s1 = std::make_shared<craft::MemoryStorage>();
+    auto s1 = std::make_shared<craft::MemoryStorage>(logger);
     s1->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(1);
     s1->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(2);
     s1->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(3);
     s1->Append(tt.leader_log);
-    auto s2 = std::make_shared<craft::MemoryStorage>();
+    auto s2 = std::make_shared<craft::MemoryStorage>(logger);
     s2->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(1);
     s2->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(2);
     s2->GetSnapshot()->mutable_metadata()->mutable_conf_state()->add_voters(3);

@@ -18,7 +18,8 @@
 #include <memory>
 
 #include "gtest/gtest.h"
-#include "log.h"
+#include "src/log.h"
+#include "src/logger.h"
 
 static craft::EntryPtr makeEntry(uint64_t index, uint64_t term) {
   auto ent = std::make_shared<raftpb::Entry>();
@@ -65,8 +66,9 @@ TEST(RaftLog, FindConflict) {
     {{makeEntry(3, 1), makeEntry(4, 2), makeEntry(5, 4), makeEntry(6, 4)}, 3}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto raft_log = craft::RaftLog::New(std::make_shared<craft::MemoryStorage>());
+    auto raft_log = craft::RaftLog::New(logger, std::make_shared<craft::MemoryStorage>(logger));
     raft_log->Append(previous_ents);
 
     auto gconfilct = raft_log->FindConflict(tt.ents);
@@ -76,7 +78,8 @@ TEST(RaftLog, FindConflict) {
 
 TEST(RaftLog, IsUpToData) {
   craft::EntryPtrs previous_ents = {makeEntry(1, 1), makeEntry(2, 2), makeEntry(3, 3)};
-  auto raft_log = craft::RaftLog::New(std::make_shared<craft::MemoryStorage>());
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto raft_log = craft::RaftLog::New(logger, std::make_shared<craft::MemoryStorage>(logger));
   raft_log->Append(previous_ents);
 
   struct Test {
@@ -123,10 +126,11 @@ TEST(RaftLog, Append) {
     {{makeEntry(2, 3), makeEntry(3, 3)}, 3, {makeEntry(1, 1), makeEntry(2, 3), makeEntry(3, 3)}, 2}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->Append(previous_ents);
-    auto raft_log = craft::RaftLog::New(storage);
+    auto raft_log = craft::RaftLog::New(logger, storage);
 
     auto index = raft_log->Append(tt.ents);
     ASSERT_EQ(index, tt.windex);
@@ -230,8 +234,9 @@ TEST(RaftLog, MaybeAppend) {
       // }
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto raft_log = craft::RaftLog::New(std::make_shared<craft::MemoryStorage>());
+    auto raft_log = craft::RaftLog::New(logger, std::make_shared<craft::MemoryStorage>(logger));
     raft_log->Append(previous_ents);
     raft_log->SetCommitted(commit);
 
@@ -251,16 +256,17 @@ TEST(RaftLog, MaybeAppend) {
 // TestCompactionSideEffects ensures that all the log related functionality works correctly after
 // a compaction.
 TEST(RaftLog, CompactionSideEffects) {
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   // Populate the log with 1000 entries; 750 in stable storage and 250 in unstable.
   uint64_t last_index = 1000;
   uint64_t unstable_index = 750;
   uint64_t last_term = last_index;
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   for (uint64_t i = 1; i <= unstable_index; i++) {
     storage->Append({makeEntry(i, i)});
   }
 
-  auto raft_log = craft::RaftLog::New(storage);
+  auto raft_log = craft::RaftLog::New(logger, storage);
   for (uint64_t i = unstable_index; i < last_index; i++) {
     raft_log->Append({makeEntry(i+1, i+1)});
   }
@@ -316,10 +322,11 @@ TEST(RaftLog, HasNextEnts) {
     {5, false}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->ApplySnapshot(snap);
-    auto raft_log = craft::RaftLog::New(storage);
+    auto raft_log = craft::RaftLog::New(logger, storage);
     raft_log->Append(ents);
     raft_log->MaybeCommit(5, 1);
     raft_log->AppliedTo(tt.applied);
@@ -347,10 +354,11 @@ TEST(RaftLog, NextEnts) {
     {5, {}}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->ApplySnapshot(snap);
-    auto raft_log = craft::RaftLog::New(storage);
+    auto raft_log = craft::RaftLog::New(logger, storage);
     raft_log->Append(ents);
     raft_log->MaybeCommit(5, 1);
     raft_log->AppliedTo(tt.applied);
@@ -387,13 +395,14 @@ TEST(RaftLog, UnstableEnts) {
     {1, previous_ents}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
     // append stable entries to storage
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     storage->Append(getEnts(previous_ents, 0, tt.unstable - 1));
 
     // append unstable entries to raftlog
-    auto raft_log = craft::RaftLog::New(storage);
+    auto raft_log = craft::RaftLog::New(logger, storage);
     raft_log->Append(getEnts(previous_ents, tt.unstable - 1));
 
     auto ents = raft_log->UnstableEntries();
@@ -423,8 +432,9 @@ TEST(RaftLog, CommitTo) {
     // {4, 0} // commit out of range -> panic
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto raft_log = std::make_shared<craft::RaftLog>(std::make_shared<craft::MemoryStorage>());
+    auto raft_log = std::make_shared<craft::RaftLog>(logger, std::make_shared<craft::MemoryStorage>(logger));
     raft_log->Append(previous_ents);
     raft_log->SetCommitted(commit);
     raft_log->CommitTo(tt.commit);
@@ -448,8 +458,9 @@ TEST(RaftLog, StableTo) {
     {3, 1, 1}  // bad index
   };
 
-  for (auto&& tt : tests) {
-    auto raft_log = std::make_shared<craft::RaftLog>(std::make_shared<craft::MemoryStorage>());
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  for (auto& tt : tests) {
+    auto raft_log = std::make_shared<craft::RaftLog>(logger, std::make_shared<craft::MemoryStorage>(logger));
     raft_log->Append({makeEntry(1, 1), makeEntry(2, 2)});
     raft_log->StableTo(tt.stablei, tt.stablet);
     ASSERT_EQ(raft_log->GetUnstable().Offset(), tt.wunstable);
@@ -485,13 +496,14 @@ TEST(RaftLog, StableToWithSnap) {
     {snapi-1, snapt+1, {makeEntry(snapi+1, snapt)}, snapi+1}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto s = std::make_shared<craft::MemoryStorage>();
+    auto s = std::make_shared<craft::MemoryStorage>(logger);
     auto snap = std::make_shared<raftpb::Snapshot>();
     snap->mutable_metadata()->set_index(snapi);
     snap->mutable_metadata()->set_term(snapt);
     s->ApplySnapshot(snap);
-    auto raft_log = craft::RaftLog::New(s);
+    auto raft_log = craft::RaftLog::New(logger, s);
     raft_log->Append(tt.new_ents);
     raft_log->StableTo(tt.stablei, tt.stablet);
     ASSERT_EQ(raft_log->GetUnstable().Offset(), tt.wunstable);
@@ -515,12 +527,13 @@ TEST(RaftLog, Compaction) {
     {1000, {300, 299}, {700, -1}, false}
   };
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   for (auto& tt : tests) {
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     for (uint64_t i = 1; i <= tt.last_index; i++) {
       storage->Append({makeEntry(i, 0)});
     }
-    auto raft_log = craft::RaftLog::New(storage);
+    auto raft_log = craft::RaftLog::New(logger, storage);
     raft_log->MaybeCommit(tt.last_index, 0);
     raft_log->AppliedTo(raft_log->Committed());
 
@@ -542,10 +555,11 @@ TEST(RaftLog, LogRestore) {
   snap->mutable_metadata()->set_index(index);
   snap->mutable_metadata()->set_term(term);
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->ApplySnapshot(snap);
 
-  auto raft_log = craft::RaftLog::New(storage);
+  auto raft_log = craft::RaftLog::New(std::make_shared<craft::ConsoleLogger>(), storage);
 
   ASSERT_EQ(raft_log->AllEntries().size(), static_cast<size_t>(0));
   ASSERT_EQ(raft_log->FirstIndex(), index + 1);
@@ -559,11 +573,12 @@ TEST(RaftLog, LogRestore) {
 TEST(RaftLog, IsOutOfBounds) {
   uint64_t offset = 100;
   uint64_t num = 100;
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   auto snap = std::make_shared<raftpb::Snapshot>();
   snap->mutable_metadata()->set_index(offset);
   storage->ApplySnapshot(snap);
-  auto l = craft::RaftLog::New(storage);
+  auto l = craft::RaftLog::New(logger, storage);
   for (uint64_t i = 1; i <= num; i++) {
     l->Append({makeEntry(i + offset, 0)});
   }
@@ -606,12 +621,13 @@ TEST(RaftLog, Term) {
   uint64_t offset = 100;
   uint64_t num = 100;
 
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto logger = std::make_shared<craft::ConsoleLogger>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   auto snap = std::make_shared<raftpb::Snapshot>();
   snap->mutable_metadata()->set_index(offset);
   snap->mutable_metadata()->set_term(1);
   storage->ApplySnapshot(snap);
-  auto l = craft::RaftLog::New(storage);
+  auto l = craft::RaftLog::New(std::make_shared<craft::ConsoleLogger>(), storage);
   for (uint64_t i = 1; i < num; i++) {
     l->Append({makeEntry(offset + i, i)});
   }
@@ -638,16 +654,17 @@ TEST(RaftLog, TermWithUnstableSnapshot) {
   uint64_t storagesnapi = 100;
   uint64_t unstablesnapi = storagesnapi + 5;
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   auto snap = std::make_shared<raftpb::Snapshot>();
   snap->mutable_metadata()->set_index(storagesnapi);
   snap->mutable_metadata()->set_term(1);
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->ApplySnapshot(snap);
 
   auto snap2 = std::make_shared<raftpb::Snapshot>();
   snap2->mutable_metadata()->set_index(unstablesnapi);
   snap2->mutable_metadata()->set_term(1);
-  auto l = craft::RaftLog::New(storage);
+  auto l = craft::RaftLog::New(logger, storage);
   l->Restore(snap2);
 
   struct Test {
@@ -680,15 +697,16 @@ TEST(RaftLog, Slice) {
   halfe->set_index(half);
   halfe->set_term(half);
 
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   auto snap = std::make_shared<raftpb::Snapshot>();
   snap->mutable_metadata()->set_index(offset);
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto storage = std::make_shared<craft::MemoryStorage>(logger);
   storage->ApplySnapshot(snap);
   for (i = 1; i < num / 2; i++) {
     storage->Append({makeEntry(offset + i, offset + i)});
   }
 
-  auto l = craft::RaftLog::New(storage);
+  auto l = craft::RaftLog::New(logger, storage);
   for (i = num / 2; i < num; i++) {
     l->Append({makeEntry(offset + i, offset + i)});
   }

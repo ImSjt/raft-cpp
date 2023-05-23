@@ -13,15 +13,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "tracker/inflights.h"
-
-#include "logger.h"
+#include "src/tracker/inflights.h"
 
 namespace craft {
 
 void Inflights::Add(uint64_t inflight) {
   if (Full()) {
-    LOG_FATAL("cannot add into a Full inflights");
+    CRAFT_LOG_FATAL(logger_, "cannot add into a Full inflights");
   }
   int32_t next = start_ + count_;
   int32_t size = size_;

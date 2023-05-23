@@ -15,7 +15,7 @@
 // limitations under the License.
 
 #include "gtest/gtest.h"
-#include "raft_test_util.h"
+#include "src/raft_test_util.h"
 
 // TestMsgAppFlowControlFull ensures:
 // 1. msgApp can fill the sending window until full

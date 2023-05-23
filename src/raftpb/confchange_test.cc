@@ -14,7 +14,7 @@
 #include <iostream>
 
 #include "gtest/gtest.h"
-#include "raftpb/confchange.h"
+#include "src/raftpb/confchange.h"
 
 TEST(ConfChange, IsNull) {
   struct Test {
@@ -97,7 +97,7 @@ TEST(ConfChange, EnterJoint) {
   {
     raftpb::ConfChangeV2 cc;
     cc.set_transition(raftpb::ConfChangeTransition::ConfChangeTransitionAuto);
-    ASSERT_EQ(craft::EnterJoint(cc), std::make_tuple(false, false));
+    ASSERT_EQ(craft::EnterJoint(std::make_shared<craft::ConsoleLogger>(), cc), std::make_tuple(false, false));
   }
 
   {
@@ -105,7 +105,7 @@ TEST(ConfChange, EnterJoint) {
     cc.set_transition(raftpb::ConfChangeTransition::ConfChangeTransitionAuto);
     cc.add_changes();
     cc.add_changes();
-    ASSERT_EQ(craft::EnterJoint(cc), std::make_tuple(true, true));
+    ASSERT_EQ(craft::EnterJoint(std::make_shared<craft::ConsoleLogger>(), cc), std::make_tuple(true, true));
   }
 
   {
@@ -113,7 +113,7 @@ TEST(ConfChange, EnterJoint) {
     cc.set_transition(raftpb::ConfChangeTransition::ConfChangeTransitionJointImplicit);
     cc.add_changes();
     cc.add_changes();
-    ASSERT_EQ(craft::EnterJoint(cc), std::make_tuple(true, true));
+    ASSERT_EQ(craft::EnterJoint(std::make_shared<craft::ConsoleLogger>(), cc), std::make_tuple(true, true));
   }
 
   {
@@ -121,7 +121,7 @@ TEST(ConfChange, EnterJoint) {
     cc.set_transition(raftpb::ConfChangeTransition::ConfChangeTransitionJointExplicit);
     cc.add_changes();
     cc.add_changes();
-    ASSERT_EQ(craft::EnterJoint(cc), std::make_tuple(false, true));
+    ASSERT_EQ(craft::EnterJoint(std::make_shared<craft::ConsoleLogger>(), cc), std::make_tuple(false, true));
   }
 }
 

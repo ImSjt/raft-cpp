@@ -18,9 +18,10 @@
 #include <memory>
 #include <vector>
 
-#include "define.h"
-#include "raftpb/raft.pb.h"
-#include "status.h"
+#include "src/define.h"
+#include "src/raftpb/raft.pb.h"
+#include "src/status.h"
+#include "src/logger.h"
 
 class RaftLog;
 namespace craft {
@@ -31,7 +32,7 @@ namespace craft {
 // might need to truncate the log before persisting unstable.entries.
 class Unstable {
  public:
-  Unstable() : offset_(0) {}
+  Unstable(std::shared_ptr<Logger> logger) : logger_(logger), offset_(0) {}
 
   // MaybeFirstIndex returns the index of the first possible entry in entries
   // if it has a snapshot.
@@ -76,6 +77,8 @@ class Unstable {
   void MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const;
 
   friend class RaftLog;
+
+  std::shared_ptr<Logger> logger_;
   // the incoming unstable snapshot, if any.
   SnapshotPtr snapshot_;
   // all entries that have not yet been written to storage.

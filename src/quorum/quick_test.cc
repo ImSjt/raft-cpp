@@ -20,8 +20,8 @@
 #include <random>
 
 #include "gtest/gtest.h"
-#include "quorum/majority.h"
-#include "util.h"
+#include "src/quorum/majority.h"
+#include "src/util.h"
 
 static std::vector<int> makeRandomArray(int n) {
   std::vector<int> m(n);

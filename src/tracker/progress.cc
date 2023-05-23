@@ -13,17 +13,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "tracker/progress.h"
+#include "src/tracker/progress.h"
 
 #include <cassert>
 #include <sstream>
 
-#include "logger.h"
+#include "src/logger.h"
 
 namespace craft {
 
-Progress::Progress()
-    : match_(0),
+Progress::Progress(std::shared_ptr<Logger> logger)
+    : logger_(logger),
+      match_(0),
       next_(0),
       state_(StateType::kProbe),
       pending_snapshot_(0),
@@ -31,14 +32,15 @@ Progress::Progress()
       probe_sent_(false),
       is_learner_(false) {}
 
-Progress::Progress(uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active)
-  : match_(match),
+Progress::Progress(std::shared_ptr<Logger> logger, uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active)
+  : logger_(logger),
+    match_(match),
     next_(next),
     state_(StateType::kProbe),
     pending_snapshot_(0),
     recent_active_(active),
     probe_sent_(false),
-    inflights_(std::make_unique<Inflights>(max_inflight)),
+    inflights_(std::make_unique<Inflights>(logger, max_inflight)),
     is_learner_(is_learner) {}
 
 void Progress::ResetState(StateType state) {
@@ -120,7 +122,7 @@ bool Progress::IsPaused() const {
     case StateType::kSnapshot:
       return true;
     default:
-      LOG_FATAL("unexpected state");
+      CRAFT_LOG_FATAL(logger_, "unexpected state");
   }
   return true;
 }

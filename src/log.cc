@@ -13,13 +13,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "log.h"
+#include "src/log.h"
 
 #include <cassert>
 #include <cstring>
 
-#include "logger.h"
-#include "util.h"
+#include "src/logger.h"
+#include "src/util.h"
 
 namespace craft {
 
@@ -28,8 +28,12 @@ static bool IsEmptySnap(SnapshotPtr snapshot) {
   return snapshot->metadata().index() == 0;
 }
 
-RaftLog::RaftLog(std::shared_ptr<Storage> storage, uint64_t max_next_ents_size)
-    : storage_(storage),
+RaftLog::RaftLog(std::shared_ptr<Logger> logger,
+                 std::shared_ptr<Storage> storage,
+                 uint64_t max_next_ents_size)
+    : logger_(logger),
+      storage_(storage),
+      unstable_(logger),
       committed_(0),
       applied_(0),
       max_next_ents_size_(max_next_ents_size) {
@@ -57,12 +61,12 @@ std::tuple<uint64_t, bool> RaftLog::MaybeAppend(uint64_t index,
     if (ci == 0) {
       // do nothing
     } else if (ci <= committed_) {
-      LOG_FATAL("entry %d conflict with committed entry [committed(%d)]", ci,
+      CRAFT_LOG_FATAL(logger_, "entry %d conflict with committed entry [committed(%d)]", ci,
                 committed_);
     } else {
       uint64_t offset = index + 1;
       if (ci - offset > static_cast<uint64_t>(ents.size())) {
-        LOG_FATAL("index, %d, is out of range [%d]", ci - offset, ents.size());
+        CRAFT_LOG_FATAL(logger_, "index, %d, is out of range [%d]", ci - offset, ents.size());
       }
       ents.erase(ents.begin(), ents.begin() + (ci - offset));
       Append(ents);
@@ -87,7 +91,7 @@ EntryPtrs RaftLog::NextEnts() const {
     auto [ents, status] = Slice(off, committed_ + 1, max_next_ents_size_);
     if (!status.IsOK()) {
       // panic
-      LOG_FATAL("unexpected error when getting unapplied entries (%s)",
+      CRAFT_LOG_FATAL(logger_, "unexpected error when getting unapplied entries (%s)",
                 status.Str());
     }
     return ents;
@@ -136,7 +140,7 @@ void RaftLog::CommitTo(uint64_t tocommit) {
   // never decrease commit
   if (committed_ < tocommit) {
     if (LastIndex() < tocommit) {
-      LOG_FATAL(
+      CRAFT_LOG_FATAL(logger_,
           "tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log "
           "corrupted, truncated, or lost?",
           tocommit, LastIndex());
@@ -150,7 +154,7 @@ void RaftLog::AppliedTo(uint64_t i) {
     return;
   }
   if (committed_ < i || i < applied_) {
-    LOG_FATAL("applied(%d) is out of range [prevApplied(%d), committed(%d)]", i,
+    CRAFT_LOG_FATAL(logger_, "applied(%d) is out of range [prevApplied(%d), committed(%d)]", i,
               applied_, committed_);
   }
   applied_ = i;
@@ -159,7 +163,7 @@ void RaftLog::AppliedTo(uint64_t i) {
 uint64_t RaftLog::LastTerm() const {
   auto [term, status] = Term(LastIndex());
   if (!status.IsOK()) {
-    LOG_FATAL("unexpected error when getting the last term (%s)", status.Str());
+    CRAFT_LOG_FATAL(logger_, "unexpected error when getting the last term (%s)", status.Str());
   }
   return term;
 }
@@ -187,7 +191,7 @@ std::tuple<uint64_t, Status> RaftLog::Term(uint64_t i) const {
     return std::make_tuple(0, std::move(status));
   }
 
-  LOG_FATAL("unexpected error: %s", status.Str());
+  CRAFT_LOG_FATAL(logger_, "unexpected error: %s", status.Str());
   return std::make_tuple(0, std::move(status));
 }
 
@@ -207,7 +211,7 @@ EntryPtrs RaftLog::AllEntries() const {
     // try again if there was a racing compaction
     return AllEntries();
   }
-  LOG_FATAL("unexpected error: %s", status.Str());
+  CRAFT_LOG_FATAL(logger_, "unexpected error: %s", status.Str());
   return EntryPtrs();
 }
 
@@ -232,7 +236,7 @@ bool RaftLog::MaybeCommit(uint64_t max_index, uint64_t term) {
 }
 
 void RaftLog::Restore(SnapshotPtr snapshot) {
-  LOG_INFO("starts to restore snapshot [index: %d, term: %d]",
+  CRAFT_LOG_INFO(logger_, "starts to restore snapshot [index: %d, term: %d]",
            snapshot->metadata().index(), snapshot->metadata().term());
   committed_ = snapshot->metadata().index();
   unstable_.Restore(snapshot);
@@ -245,7 +249,7 @@ uint64_t RaftLog::Append(const EntryPtrs& ents) {
 
   uint64_t after = ents[0]->index() - 1;
   if (after < committed_) {
-    LOG_FATAL("after(%d) is out of range [committed(%d)]", after, committed_);
+    CRAFT_LOG_FATAL(logger_, "after(%d) is out of range [committed(%d)]", after, committed_);
   }
 
   unstable_.TruncateAndAppend(ents);
@@ -257,7 +261,7 @@ uint64_t RaftLog::FindConflict(const EntryPtrs& ents) const {
   for (auto& ent : ents) {
     if (!MatchTerm(ent->index(), ent->term())) {
       if (ent->index() <= LastIndex()) {
-        LOG_INFO(
+        CRAFT_LOG_INFO(logger_,
             "found conflict at index %d [existing term: %d, conflicting term: "
             "%d]",
             ent->index(), ZeroTermOnErrCompacted(Term(ent->index())),
@@ -279,7 +283,7 @@ uint64_t RaftLog::FindConflictByTerm(uint64_t index, uint64_t term) {
 		// there is odd behavior with peers that have no log, in which case
 		// lastIndex will return zero and firstIndex will return one, which
 		// leads to calls with an index of zero into this method.
-    LOG_WARNING("index(%llu) is out of range [0, lastIndex(%llu)] in findConflictByTerm",
+    CRAFT_LOG_WARNING(logger_, "index(%llu) is out of range [0, lastIndex(%llu)] in findConflictByTerm",
       index, li);
     return index;
   }
@@ -311,10 +315,10 @@ std::tuple<EntryPtrs, Status> RaftLog::Slice(uint64_t lo, uint64_t hi,
       if (std::strstr(status.Str(), kErrCompacted)) {
         return std::make_tuple(EntryPtrs(), std::move(status));
       } else if (std::strstr(status.Str(), kErrUnavailable)) {
-        LOG_FATAL("entries[%d:%d) is unavailable from storage", lo,
+        CRAFT_LOG_FATAL(logger_, "entries[%d:%d) is unavailable from storage", lo,
                   std::min(hi, unstable_.Offset()));
       } else {
-        LOG_FATAL("unexpected error: %s", status.Str());
+        CRAFT_LOG_FATAL(logger_, "unexpected error: %s", status.Str());
       }
     }
 
@@ -335,7 +339,7 @@ std::tuple<EntryPtrs, Status> RaftLog::Slice(uint64_t lo, uint64_t hi,
 
 Status RaftLog::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
   if (lo > hi) {
-    LOG_FATAL("invalid slice %d > %d", lo, hi);
+    CRAFT_LOG_FATAL(logger_, "invalid slice %d > %d", lo, hi);
   }
   uint64_t fi = FirstIndex();
   if (lo < fi) {
@@ -343,7 +347,7 @@ Status RaftLog::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
   }
   uint64_t len = LastIndex() + 1 - fi;
   if (hi > fi + len) {
-    LOG_FATAL("slice[%d,%d) out of bound [%d,%d]", lo, hi, fi, LastIndex());
+    CRAFT_LOG_FATAL(logger_, "slice[%d,%d) out of bound [%d,%d]", lo, hi, fi, LastIndex());
   }
   return Status::OK();
 }
@@ -356,7 +360,7 @@ uint64_t RaftLog::ZeroTermOnErrCompacted(std::tuple<uint64_t, Status> t) const {
   if (std::strstr(status.Str(), kErrCompacted)) {
     return 0;
   }
-  LOG_FATAL("unexpected error: %s", status.Str());
+  CRAFT_LOG_FATAL(logger_, "unexpected error: %s", status.Str());
   return 0;
 }
 

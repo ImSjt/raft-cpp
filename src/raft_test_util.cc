@@ -1,6 +1,6 @@
-#include "raft_test_util.h"
+#include "src/raft_test_util.h"
 
-#include "util.h"
+#include "src/util.h"
 
 NetWork::NetWork(NetWork::ConfigFunc cfg_func, std::vector<std::shared_ptr<StateMachince>> peers) {
   auto size = peers.size();
@@ -28,7 +28,7 @@ NetWork::NetWork(NetWork::ConfigFunc cfg_func, std::vector<std::shared_ptr<State
 
       craft::ProgressMap prs;
       for (size_t i = 0; i < size; i++) {
-        auto pr = std::make_shared<craft::Progress>();
+        auto pr = std::make_shared<craft::Progress>(std::make_shared<craft::ConsoleLogger>());
         if (learners.count(peer_addrs[i]) > 0) {
           pr->SetIsLearner(true);
           raft->GetTracker().GetConfig().learners_.insert(peer_addrs[i]);
@@ -126,7 +126,7 @@ std::vector<uint64_t> idsBySize(size_t size) {
 };
 
 std::shared_ptr<craft::MemoryStorage> newTestMemoryStorage(std::vector<testMemoryStorageOptions> opts) {
-  auto ms = std::make_shared<craft::MemoryStorage>();
+  auto ms = std::make_shared<craft::MemoryStorage>(std::make_shared<craft::ConsoleLogger>());
   for (auto& o : opts) {
     o(ms);
   }
@@ -185,7 +185,7 @@ void preVoteConfig(craft::Raft::Config& cfg) {
 }
 
 std::shared_ptr<Raft> entsWithConfig(NetWork::ConfigFunc config_func, std::vector<uint64_t> terms) {
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto storage = std::make_shared<craft::MemoryStorage>(std::make_shared<craft::ConsoleLogger>());
   for (size_t i = 0; i < terms.size(); i++) {
     storage->Append({NEW_ENT().Index(i+1).Term(terms[i])()});
   }
@@ -199,7 +199,7 @@ std::shared_ptr<Raft> entsWithConfig(NetWork::ConfigFunc config_func, std::vecto
 }
 
 std::shared_ptr<Raft> votedWithConfig(NetWork::ConfigFunc config_func, uint64_t vote, uint64_t term) {
-  auto storage = std::make_shared<craft::MemoryStorage>();
+  auto storage = std::make_shared<craft::MemoryStorage>(std::make_shared<craft::ConsoleLogger>());
   raftpb::HardState hard_state;
   hard_state.set_vote(vote);
   hard_state.set_term(term);

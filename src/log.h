@@ -18,10 +18,11 @@
 #include <memory>
 #include <string>
 
-#include "define.h"
-#include "log_unstable.h"
-#include "status.h"
-#include "storage.h"
+#include "src/define.h"
+#include "src/log_unstable.h"
+#include "src/status.h"
+#include "src/storage.h"
+#include "src/logger.h"
 
 namespace craft {
 
@@ -32,18 +33,20 @@ class RaftLog {
   // New returns log using the given storage and default options. It
   // recovers the log to the state that it just commits and applies the
   // latest snapshot.
-  static std::unique_ptr<RaftLog> New(std::shared_ptr<Storage> storage) {
-    return NewWithSize(storage, kNoLimit);
+  static std::unique_ptr<RaftLog> New(std::shared_ptr<Logger> logger, std::shared_ptr<Storage> storage) {
+    return NewWithSize(logger, storage, kNoLimit);
   }
 
   // NewWithSize returns a log using the given storage and max
   // message size.
-  static std::unique_ptr<RaftLog> NewWithSize(std::shared_ptr<Storage> storage,
-                                    uint64_t max_next_ents_size) {
-    return std::make_unique<RaftLog>(storage, max_next_ents_size);
+  static std::unique_ptr<RaftLog> NewWithSize(std::shared_ptr<Logger> logger,
+                                              std::shared_ptr<Storage> storage,
+                                              uint64_t max_next_ents_size) {
+    return std::make_unique<RaftLog>(logger, storage, max_next_ents_size);
   }
 
-  RaftLog(std::shared_ptr<Storage> storage,
+  RaftLog(std::shared_ptr<Logger> logger,
+          std::shared_ptr<Storage> storage,
           uint64_t max_next_ents_size = kNoLimit);
 
   std::string String() const {
@@ -161,6 +164,7 @@ class RaftLog {
   std::shared_ptr<Storage> GetStorage() { return storage_; }
 
  private:
+  std::shared_ptr<Logger> logger_;
   // storage_ contains all stable entries since the last snapshot.
   std::shared_ptr<Storage> storage_;
   // unstable_ contains all unstable entries and snapshot.

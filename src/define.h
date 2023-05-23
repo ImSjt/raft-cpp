@@ -18,7 +18,7 @@
 #include <vector>
 #include <cinttypes>
 
-#include "raftpb/raft.pb.h"
+#include "src/raftpb/raft.pb.h"
 
 namespace craft {
 

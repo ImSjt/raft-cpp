@@ -21,9 +21,10 @@
 #include <string>
 #include <vector>
 
-#include "raftpb/raft.pb.h"
-#include "define.h"
-#include "status.h"
+#include "src/raftpb/raft.pb.h"
+#include "src/define.h"
+#include "src/status.h"
+#include "src/logger.h"
 
 namespace craft {
 
@@ -92,7 +93,7 @@ class Storage {
 // in-memory array.
 class MemoryStorage : public Storage {
  public:
-  MemoryStorage();
+  MemoryStorage(std::shared_ptr<Logger> logger);
 
   // InitialState implements the Storage interface.
   std::tuple<raftpb::HardState, raftpb::ConfState, Status> InitialState()
@@ -151,6 +152,7 @@ class MemoryStorage : public Storage {
   uint64_t LastIndexUnSafe() const;
   uint64_t FirstIndexUnSafe() const;
 
+  std::shared_ptr<Logger> logger_;
   // Protects access to all fields. Most methods of MemoryStorage are
   // run on the raft thread, but Append() is run on an application
   // thread.

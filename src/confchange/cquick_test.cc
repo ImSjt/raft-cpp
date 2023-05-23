@@ -20,8 +20,8 @@
 #include <random>
 
 #include "gtest/gtest.h"
-#include "confchange/confchange.h"
-#include "util.h"
+#include "src/confchange/confchange.h"
+#include "src/util.h"
 
 template <typename GN, typename GID, typename GT>
 static std::vector<raftpb::ConfChangeSingle> genCC(GN&& num, GID&& id, GT&& typ) {
@@ -149,7 +149,7 @@ TEST(ConfChange, Quick) {
                const CCS& setup,
                const CCS& ccs) -> std::tuple<craft::Changer, craft::Status> {
       craft::ProgressTracker tr(10);
-      craft::Changer c(tr, 10);
+      craft::Changer c(std::make_shared<craft::ConsoleLogger>(), tr, 10);
       auto status = run_with_simple(c, setup);
       if (!status.IsOK()) {
         return std::make_tuple(c, std::move(status));

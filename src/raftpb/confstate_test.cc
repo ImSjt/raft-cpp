@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "gtest/gtest.h"
-#include "raftpb/confstate.h"
+#include "src/raftpb/confstate.h"
 
 static auto makeRepeatedField(std::vector<uint64_t> arr) {
   ::google::protobuf::RepeatedField< ::google::protobuf::uint64 > m;

@@ -16,10 +16,10 @@
 #include <random>
 
 #include "gtest/gtest.h"
-#include "confchange/confchange.h"
-#include "confchange/restore.h"
-#include "raftpb/confstate.h"
-#include "util.h"
+#include "src/confchange/confchange.h"
+#include "src/confchange/restore.h"
+#include "src/raftpb/confstate.h"
+#include "src/util.h"
 
 static std::vector<uint64_t> genRandomArray(int n) {
   std::vector<uint64_t> m(n);
@@ -108,7 +108,7 @@ static raftpb::ConfState genConfState() {
 
 TEST(Restore, Quick) {
   auto f = [](const raftpb::ConfState& cs) {
-    craft::Changer chg(craft::ProgressTracker(20), 10);
+    craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(20), 10);
     auto [cfg, prs, status] = craft::Restore(chg, cs);
     EXPECT_TRUE(status.IsOK()) << status.Str();
     chg.GetProgressTracker().SetConfig(std::move(cfg));

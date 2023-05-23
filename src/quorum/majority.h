@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "quorum/quorum.h"
+#include "src/quorum/quorum.h"
 
 namespace craft {
 

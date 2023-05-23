@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "gtest/gtest.h"
-#include "log_unstable.h"
+#include "src/log_unstable.h"
 
 static craft::EntryPtr makeEntry(uint64_t index, uint64_t term) {
   auto ent = std::make_shared<raftpb::Entry>();
@@ -58,7 +58,7 @@ TEST(Unstable, MaybeFirstIndex) {
   };
 
   for (auto& tt : tests) {
-    craft::Unstable u;
+    craft::Unstable u(std::make_shared<craft::ConsoleLogger>());
     u.SetEntries(tt.entries);
     u.SetOffset(tt.offset);
     u.SetSnapshot(tt.snap);
@@ -97,7 +97,7 @@ TEST(Unstable, MaybeLastIndex) {
   };
 
   for (auto& tt : tests) {
-    craft::Unstable u;
+    craft::Unstable u(std::make_shared<craft::ConsoleLogger>());
     u.SetEntries(tt.entries);
     u.SetOffset(tt.offset);
     u.SetSnapshot(tt.snap);
@@ -154,7 +154,7 @@ TEST(Unstable, MaybeTerm) {
   };
 
   for (auto& tt : tests) {
-    craft::Unstable u;
+    craft::Unstable u(std::make_shared<craft::ConsoleLogger>());
     u.SetEntries(tt.entries);
     u.SetOffset(tt.offset);
     u.SetSnapshot(tt.snap);
@@ -166,7 +166,7 @@ TEST(Unstable, MaybeTerm) {
 }
 
 TEST(Unstable, Restore) {
-  craft::Unstable u;
+  craft::Unstable u(std::make_shared<craft::ConsoleLogger>());
   u.SetEntries({makeEntry(4, 1)});
   u.SetOffset(5);
   u.SetSnapshot(makeSnapshot(4, 1));
@@ -237,7 +237,7 @@ TEST(Unstable, StableTo) {
     };
 
   for (auto& tt : tests) {
-    craft::Unstable u;
+    craft::Unstable u(std::make_shared<craft::ConsoleLogger>());
     u.SetEntries(tt.entries);
     u.SetOffset(tt.offset);
     u.SetSnapshot(tt.snap);
@@ -297,7 +297,7 @@ TEST(Unstable, TruncateAndAppend) {
   };
 
   for (auto& tt : tests) {
-    craft::Unstable u;
+    craft::Unstable u(std::make_shared<craft::ConsoleLogger>());
     u.SetEntries(tt.entries);
     u.SetOffset(tt.offset);
     u.SetSnapshot(tt.snap);

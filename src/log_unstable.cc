@@ -13,9 +13,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "log_unstable.h"
+#include "src/log_unstable.h"
 
-#include "logger.h"
+#include "src/logger.h"
 
 namespace craft {
 
@@ -91,7 +91,7 @@ void Unstable::TruncateAndAppend(const EntryPtrs& ents) {
     // directly append
     entries_.insert(entries_.end(), ents.begin(), ents.end());
   } else if (after <= offset_) {
-    LOG_INFO("replace the unstable entries from index %d", after);
+    CRAFT_LOG_INFO(logger_, "replace the unstable entries from index %d", after);
     // The log is being truncated to before our current offset
     // portion, so set the offset and replace the entries
     offset_ = after;
@@ -117,12 +117,12 @@ void Unstable::ShrikEntriesArray() { entries_.shrink_to_fit(); }
 
 void Unstable::MustCheckOutOfBounds(uint64_t lo, uint64_t hi) const {
   if (lo > hi) {
-    LOG_FATAL("invalid unstable.slice %d > %d", lo, hi);
+    CRAFT_LOG_FATAL(logger_, "invalid unstable.slice %d > %d", lo, hi);
   }
 
   uint64_t upper = offset_ + static_cast<uint64_t>(entries_.size());
   if (lo < offset_ || hi > upper) {
-    LOG_FATAL("unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, offset_,
+    CRAFT_LOG_FATAL(logger_, "unstable.slice[%d,%d) out of bound [%d,%d]", lo, hi, offset_,
               upper);
   }
 }

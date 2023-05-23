@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <cstdarg>
+#include <mutex>
 
 namespace craft {
 
@@ -50,33 +51,23 @@ class ConsoleLogger : public Logger {
 
  private:
   const char* GetPrefix(LogLevel level);
+
+  std::mutex lock_;
 };
 
-#define LOG_TRACE(format, ...)
-
-#define LOG_DEBUG(format, ...)
-
-#define LOG_INFO(format, ...)
-
-#define LOG_WARNING(format, ...)
-
-#define LOG_ERROR(format, ...)
-
-#define LOG_FATAL(format, ...)
-
 #define CRAFT_LOG_DEBUG(logger, format, ...) \
-  logger->Log(LogLevel::kDebug, format, ##__VA_ARGS__)
+  logger->Log(::craft::LogLevel::kDebug, format, ##__VA_ARGS__)
 
 #define CRAFT_LOG_INFO(logger, format, ...) \
-  logger->Log(LogLevel::kInfo, format, ##__VA_ARGS__)
+  logger->Log(::craft::LogLevel::kInfo, format, ##__VA_ARGS__)
 
 #define CRAFT_LOG_WARNING(logger, format, ...) \
-  logger->Log(LogLevel::kWarning, format, ##__VA_ARGS__)
+  logger->Log(::craft::LogLevel::kWarning, format, ##__VA_ARGS__)
 
 #define CRAFT_LOG_ERROR(logger, format, ...) \
-  logger->Log(LogLevel::kError, format, ##__VA_ARGS__)
+  logger->Log(::craft::LogLevel::kError, format, ##__VA_ARGS__)
 
 #define CRAFT_LOG_FATAL(logger, format, ...) \
-  logger->Log(LogLevel::kFatal, format, ##__VA_ARGS__)
+  logger->Log(::craft::LogLevel::kFatal, format, ##__VA_ARGS__)
 
 }  // namespace craft

@@ -22,7 +22,8 @@
 #include <string>
 #include <deque>
 
-#include "define.h"
+#include "src/define.h"
+#include "src/logger.h"
 
 namespace craft {
 
@@ -30,7 +31,7 @@ namespace craft {
 // It's caller's responsibility to call read_index_ first before getting
 // this state from ready, it's also caller's duty to differentiate if this
 // state is what it requests through request_ctx_, eg. given a unique id as
-// request_ctx_
+// request_ctx
 struct ReadState {
   uint64_t index;
   std::string request_ctx;
@@ -63,7 +64,9 @@ class ReadOnly {
     kNumReadOnlyOption
   };
 
-  ReadOnly(const ReadOnlyOption& option) : option_(option) {}
+  ReadOnly(std::shared_ptr<Logger> logger, const ReadOnlyOption& option)
+    : logger_(logger),
+      option_(option) {}
 
   // AddRequest adds a read only request into readonly struct.
   // `index` is the commit index of the raft state machine when it received
@@ -92,6 +95,7 @@ class ReadOnly {
   auto& GetReadIndexQueue() { return read_index_queue_; }
 
  private:
+  std::shared_ptr<Logger> logger_;
   ReadOnlyOption option_;
   std::map<std::string, std::shared_ptr<ReadIndexStatus>> pending_read_index_;
   std::deque<std::string> read_index_queue_;

@@ -13,7 +13,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "confchange/confchange.h"
+#include "src/confchange/confchange.h"
 
 namespace craft {
 
@@ -197,6 +197,7 @@ void Changer::InitProgress(ProgressTracker::Config& cfg, ProgressMap& prs,
   }
 
   prs[id] = std::make_shared<Progress>(
+      logger_,
       // Initializing the Progress with the last index means that the follower
       // can be probed (with the last index).
       //

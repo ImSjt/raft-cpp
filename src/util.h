@@ -17,9 +17,9 @@
 #include <vector>
 #include <random>
 
-#include "define.h"
-#include "logger.h"
-#include "raftpb/raft.pb.h"
+#include "src/define.h"
+#include "src/logger.h"
+#include "src/raftpb/raft.pb.h"
 
 namespace craft {
 
@@ -27,14 +27,14 @@ class Util {
  public:
   static EntryPtrs LimitSize(EntryPtrs&& ents, uint64_t max_size);
 
-  static raftpb::MessageType VoteRespMsgType(raftpb::MessageType msgt) {
+  static raftpb::MessageType VoteRespMsgType(std::shared_ptr<Logger> logger, raftpb::MessageType msgt) {
     switch (msgt) {
     case raftpb::MessageType::MsgVote:
       return raftpb::MessageType::MsgVoteResp;
     case raftpb::MessageType::MsgPreVote:
       return raftpb::MessageType::MsgPreVoteResp;
     default:
-      LOG_FATAL("unexpect type: %d", raftpb::MessageType_Name(msgt).c_str());
+      CRAFT_LOG_FATAL(logger, "unexpect type: %s", raftpb::MessageType_Name(msgt).c_str());
       return msgt;
     }
   }

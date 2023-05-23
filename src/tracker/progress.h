@@ -18,16 +18,17 @@
 #include <cstdint>
 #include <memory>
 
-#include "tracker/inflights.h"
-#include "tracker/state.h"
+#include "src/tracker/inflights.h"
+#include "src/tracker/state.h"
+#include "src/logger.h"
 
 namespace craft {
 
 class Progress {
  public:
-  Progress();
+  Progress(std::shared_ptr<Logger> logger);
 
-  Progress(uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active);
+  Progress(std::shared_ptr<Logger> logger, uint64_t next, uint64_t match, int64_t max_inflight, bool is_learner, bool active);
 
   // ResetState moves the Progress into the specified State, resetting
   // ProbeSent, PendingSnapshot, and Inflights.
@@ -110,7 +111,7 @@ class Progress {
   std::string String() const;
 
   std::shared_ptr<Progress> Clone() {
-    auto pr = std::make_shared<Progress>();
+    auto pr = std::make_shared<Progress>(logger_);
     pr->match_ = match_;
     pr->next_ = next_;
     pr->state_ = state_;
@@ -123,6 +124,7 @@ class Progress {
   }
 
  private:
+  std::shared_ptr<Logger> logger_;
   uint64_t match_, next_;
   // state_ defines how the leader should interact with the follower.
   //

@@ -19,11 +19,11 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "tracker/inflights.h"
+#include "src/tracker/inflights.h"
 
 static craft::Inflights makeInflights(int32_t start, int32_t count,
                                       int32_t size, std::vector<uint64_t> buffer) {
-  craft::Inflights in(size);
+  craft::Inflights in(std::make_shared<craft::ConsoleLogger>(), size);
   in.SetStrat(start);
   in.SetCount(count);
   in.SetBuffer(buffer);
@@ -32,7 +32,7 @@ static craft::Inflights makeInflights(int32_t start, int32_t count,
 
 TEST(Inflights, Add) {
 	// no rotating case
-  craft::Inflights in(10);
+  craft::Inflights in(std::make_shared<craft::ConsoleLogger>(), 10);
   for (size_t i = 0; i < 10; i++) {
     in.Add(i);
   }
@@ -89,7 +89,7 @@ TEST(Inflights, Add) {
 
 TEST(Inflights, FreeLE) {
   // no rotating case
-  craft::Inflights in(10);
+  craft::Inflights in(std::make_shared<craft::ConsoleLogger>(), 10);
   for (uint64_t i = 0; i < 10; i++) {
     in.Add(i);
   }
@@ -144,7 +144,7 @@ TEST(Inflights, FreeLE) {
 }
 
 TEST(Inflights, FreeFirstOne) {
-  craft::Inflights in(10);
+  craft::Inflights in(std::make_shared<craft::ConsoleLogger>(), 10);
   for (uint64_t i = 0; i < 10; i++) {
     in.Add(i);
   }

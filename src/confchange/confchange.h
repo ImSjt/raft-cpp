@@ -18,9 +18,10 @@
 #include <cstdint>
 #include <vector>
 
-#include "raftpb/raft.pb.h"
-#include "status.h"
-#include "tracker/tracker.h"
+#include "src/logger.h"
+#include "src/raftpb/raft.pb.h"
+#include "src/status.h"
+#include "src/tracker/tracker.h"
 
 namespace craft {
 
@@ -31,10 +32,10 @@ namespace craft {
 class Changer {
  public:
   Changer() = default;
-  Changer(const ProgressTracker& tracker, uint64_t last_index)
-    : tracker_(tracker), last_index_(last_index) {}
-  Changer(const ProgressTracker&& tracker, uint64_t last_index)
-    : tracker_(std::move(tracker)), last_index_(last_index) {}
+  Changer(std::shared_ptr<Logger> logger, const ProgressTracker& tracker, uint64_t last_index)
+    : logger_(logger), tracker_(tracker), last_index_(last_index) {}
+  Changer(std::shared_ptr<Logger> logger, ProgressTracker&& tracker, uint64_t last_index)
+    : logger_(logger), tracker_(std::move(tracker)), last_index_(last_index) {}
 
   // EnterJoint verifies that the outgoing (=right) majority config of the joint
   // config is empty and initializes it with a copy of the incoming (=left)
@@ -133,6 +134,7 @@ class Changer {
 
   int Symdiff(const std::set<uint64_t>& l, const std::set<uint64_t>& r) const;
 
+  std::shared_ptr<Logger> logger_;
   ProgressTracker tracker_;
   uint64_t last_index_;
 };

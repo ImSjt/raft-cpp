@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "logger.h"
+#include "src/logger.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +37,7 @@ void Logger::Log(LogLevel level, const char* format, ...) {
 }
 
 void ConsoleLogger::Logv(LogLevel level, const char* format, va_list ap) {
+  std::lock_guard lg(lock_);
   printf(GetPrefix(level));
   vprintf(format, ap);
   printf("\n");

@@ -19,8 +19,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "quorum/majority.h"
-#include "quorum/joint.h"
+#include "src/quorum/majority.h"
+#include "src/quorum/joint.h"
 
 static craft::Index alternativeMajorityCommittedIndex(
     const craft::MajorityConfig& c, const craft::AckedIndexer& l) {
@@ -55,7 +55,7 @@ static craft::Index alternativeMajorityCommittedIndex(
   auto q = c.Size() / 2 + 1;
   craft::Index max_quorum_idx = 0;
   for (auto& p : idx_to_votes) {
-    if (p.second >= q && p.first > max_quorum_idx) {
+    if (p.second >= static_cast<int>(q) && p.first > max_quorum_idx) {
       max_quorum_idx = p.first;
     }
   }

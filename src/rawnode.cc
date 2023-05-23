@@ -13,8 +13,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "rawnode.h"
-#include "util.h"
+#include "src/rawnode.h"
+#include "src/util.h"
 
 namespace craft {
 
@@ -41,10 +41,6 @@ static bool MustSync(const raftpb::HardState& st, const raftpb::HardState& prevs
 	// log entries[]
   return entsum != 0 || st.vote() != prevst.vote() || st.term() != prevst.term();
 }
-
-// bool operator==(const SoftState& s1, const SoftState& s2) {
-//   return s1.lead == s2.lead && s1.raft_state == s2.raft_state;
-// }
 
 bool operator==(const raftpb::HardState& s1, const raftpb::HardState& s2) {
   return s1.term() == s2.term() && s1.vote() == s2.vote() && s1.commit() == s2.commit();

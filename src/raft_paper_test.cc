@@ -15,7 +15,7 @@
 // limitations under the License.
 
 #include "gtest/gtest.h"
-#include "raft_test_util.h"
+#include "src/raft_test_util.h"
 
 // testUpdateTermFromMessage tests that if one server’s current term is
 // smaller than the other’s, then it updates its current term to the larger

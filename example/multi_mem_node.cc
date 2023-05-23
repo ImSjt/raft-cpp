@@ -6,7 +6,7 @@
 #include <future>
 #include <mutex>
 
-#include "rawnode.h"
+#include "src/rawnode.h"
 #include "blockingconcurrentqueue.h"
 
 // <node_id, req_id>
@@ -190,6 +190,7 @@ static void process(int64_t heartbeat_timeout, std::shared_ptr<Node> node, Trans
 
 int main(int argc, char* argv[]) {
   uint64_t node_num = 5;
+  auto logger = std::make_shared<craft::ConsoleLogger>();
   std::map<uint64_t, std::shared_ptr<Node>> nodes;
   std::vector<craft::Peer> peers;
   std::vector<std::thread> threads;
@@ -201,7 +202,8 @@ int main(int argc, char* argv[]) {
 
   int64_t heartbeat_timeout = 100;
   for (uint64_t id = 1; id <= node_num; id++) {
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     craft::Raft::Config cfg {
       .id = id,
       .election_tick = 10,
@@ -210,6 +212,7 @@ int main(int argc, char* argv[]) {
       .max_size_per_msg = 1024 * 1024 * 1024,
       .max_inflight_msgs = 256,
       .pre_vote = true,
+      .logger = logger,
     };
     auto node = std::make_shared<Node>();
     node->rn = craft::RawNode::Start(cfg, peers);
@@ -230,7 +233,7 @@ int main(int argc, char* argv[]) {
   std::cout << "=================add node=================" << std::endl;
   {
     auto id = node_num + 1;
-    auto storage = std::make_shared<craft::MemoryStorage>();
+    auto storage = std::make_shared<craft::MemoryStorage>(logger);
     craft::Raft::Config cfg = {
       .id = id,
       .election_tick = 10,
@@ -239,6 +242,7 @@ int main(int argc, char* argv[]) {
       .max_size_per_msg = 1024 * 1024 * 1024,
       .max_inflight_msgs = 256,
       .pre_vote = true,
+      .logger = logger,
     };
     auto new_node = std::make_shared<Node>();
     new_node->rn = craft::RawNode::ReStart(cfg);

@@ -13,9 +13,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "read_only.h"
+#include "src/read_only.h"
 
-#include "logger.h"
+#include "src/logger.h"
 
 namespace craft {
 
@@ -50,7 +50,7 @@ std::vector<std::shared_ptr<ReadIndexStatus>> ReadOnly::Advance(MsgPtr m) {
     i++;
     auto it = pending_read_index_.find(okctx);
     if (it == pending_read_index_.end()) {
-      LOG_FATAL("cannot find corresponding read state from pending map");
+      CRAFT_LOG_FATAL(logger_, "cannot find corresponding read state from pending map");
     }
     rss.emplace_back(it->second);
     if (okctx == ctx) {

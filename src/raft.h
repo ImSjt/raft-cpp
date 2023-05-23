@@ -20,12 +20,12 @@
 #include <memory>
 #include <optional>
 
-#include "log.h"
-#include "quorum/quorum.h"
-#include "read_only.h"
-#include "storage.h"
-#include "tracker/tracker.h"
-#include "logger.h"
+#include "src/log.h"
+#include "src/quorum/quorum.h"
+#include "src/read_only.h"
+#include "src/storage.h"
+#include "src/tracker/tracker.h"
+#include "src/logger.h"
 
 namespace craft {
 

@@ -21,8 +21,8 @@
 #include <sstream>
 
 #include "gtest/gtest.h"
-#include "confchange/confchange.h"
-#include "raftpb/confchange.h"
+#include "src/confchange/confchange.h"
+#include "src/raftpb/confchange.h"
 
 static std::string progreMapString(const craft::ProgressMap& m) {
   std::stringstream ss;
@@ -56,7 +56,7 @@ TEST(ConfChange, JointAutoLeave) {
        "next=1}{3: StateProbe match=0 next=1}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -113,7 +113,7 @@ TEST(ConfChange, JointIdempotency) {
       "learner}{3: StateProbe match=0 next=1}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -167,7 +167,7 @@ TEST(ConfChange, JointLearnersNext) {
       "{1: StateProbe match=0 next=0 learner}{2: StateProbe match=0 next=1}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -252,7 +252,7 @@ TEST(ConfChange, JointSafety) {
       "learner}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -321,7 +321,7 @@ TEST(ConfChange, SimpleIdempotency) {
       "{2: StateProbe match=0 next=2}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -388,7 +388,7 @@ TEST(ConfChange, SimplePromoteDemote) {
       "StateProbe match=0 next=2}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -468,7 +468,7 @@ TEST(ConfChange, SimpleSafety) {
        "{1: StateProbe match=0 next=1}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -518,7 +518,7 @@ TEST(ConfChange, Update) {
     {"simple", "u1 u2 u3 u1 u2 u3", false, craft::Status::OK(), "voters=(1 2)", "{1: StateProbe match=0 next=0}{2: StateProbe match=0 next=1}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
@@ -566,7 +566,7 @@ TEST(ConfChange, Zero) {
     {"simple", "v1 r0 v0 l0", false, craft::Status::OK(), "voters=(1)", "{1: StateProbe match=0 next=0}"},
   };
 
-  craft::Changer chg(craft::ProgressTracker(10), 0);
+  craft::Changer chg(std::make_shared<craft::ConsoleLogger>(), craft::ProgressTracker(10), 0);
   for (auto& tt : tests) {
     std::vector<raftpb::ConfChangeSingle> ccs;
     if (!tt.ccs.empty()) {
