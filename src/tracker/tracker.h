@@ -40,12 +40,12 @@ class ProgressTracker {
  public:
   // Config reflects the configuration tracked in a ProgressTracker.
   struct Config {
-    JointConfig voters_;
+    JointConfig voters;
     // AutoLeave is true if the configuration is joint and a transition to the
     // incoming configuration should be carried out automatically by Raft when
     // this is possible. If false, the configuration will be joint until the
     // application initiates the transition manually.
-    bool auto_leave_ = false;
+    bool auto_leave = false;
     // Learners is a set of IDs corresponding to the learners active in the
     // current configuration.
     //
@@ -54,7 +54,7 @@ class ProgressTracker {
     // learner it can't be in either half of the joint config. This invariant
     // simplifies the implementation since it allows peers to have clarity about
     // its current role without taking into account joint consensus.
-    std::set<uint64_t> learners_;
+    std::set<uint64_t> learners;
     // When we turn a voter into a learner during a joint consensus transition,
     // we cannot add the learner directly when entering the joint state. This is
     // because this would violate the invariant that the intersection of
@@ -89,28 +89,28 @@ class ProgressTracker {
     // also a voter in the joint config. In this case, the learner is added
     // right away when entering the joint configuration, so that it is caught up
     // as soon as possible.
-    std::set<uint64_t> learners_next_;
+    std::set<uint64_t> learners_next;
 
     bool operator==(const Config& other) const {
-      return voters_.Incoming().IDs() == other.voters_.Incoming().IDs() &&
-        voters_.Outgoing().IDs() == other.voters_.Outgoing().IDs() &&
-        auto_leave_ == other.auto_leave_ &&
-        learners_ == other.learners_ &&
-        learners_next_ == other.learners_next_;
+      return voters.Incoming().IDs() == other.voters.Incoming().IDs() &&
+        voters.Outgoing().IDs() == other.voters.Outgoing().IDs() &&
+        auto_leave == other.auto_leave &&
+        learners == other.learners &&
+        learners_next == other.learners_next;
     }
 
-    bool Joint() const { return voters_.Outgoing().Size() > 0; }
+    bool Joint() const { return voters.Outgoing().Size() > 0; }
 
     std::string String() const {
       std::stringstream ss;
-      ss << "voters=" << voters_.String();
-      if (!learners_.empty()) {
-        ss << " learners=" << MajorityConfig(learners_).String();
+      ss << "voters=" << voters.String();
+      if (!learners.empty()) {
+        ss << " learners=" << MajorityConfig(learners).String();
       }
-      if (!learners_next_.empty()) {
-        ss << " learners_next=" << MajorityConfig(learners_next_).String();
+      if (!learners_next.empty()) {
+        ss << " learners_next=" << MajorityConfig(learners_next).String();
       }
-      if (auto_leave_) {
+      if (auto_leave) {
         ss << " autoleave";
       }
       return ss.str();
@@ -127,8 +127,8 @@ class ProgressTracker {
   // IsSingleton returns true if (and only if) there is only one voting member
   // (i.e. the leader) in the current configuration.
   bool IsSingleton() {
-    return config_.voters_.Incoming().Size() == 1 &&
-           config_.voters_.Outgoing().Size() == 0;
+    return config_.voters.Incoming().Size() == 1 &&
+           config_.voters.Outgoing().Size() == 0;
   }
 
   // Committed returns the largest log index known to be committed based on what

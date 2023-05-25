@@ -20,7 +20,7 @@ NetWork::NetWork(NetWork::ConfigFunc cfg_func, std::vector<std::shared_ptr<State
       std::set<uint64_t> learners;
       auto sm = std::dynamic_pointer_cast<Raft>(peer);
       auto raft = sm->Get();
-      for (auto i : raft->GetTracker().GetConfig().learners_) {
+      for (auto i : raft->GetTracker().GetConfig().learners) {
         learners.insert(i);
       }
       raft->SetID(id);
@@ -31,9 +31,9 @@ NetWork::NetWork(NetWork::ConfigFunc cfg_func, std::vector<std::shared_ptr<State
         auto pr = std::make_shared<craft::Progress>(std::make_shared<craft::ConsoleLogger>());
         if (learners.count(peer_addrs[i]) > 0) {
           pr->SetIsLearner(true);
-          raft->GetTracker().GetConfig().learners_.insert(peer_addrs[i]);
+          raft->GetTracker().GetConfig().learners.insert(peer_addrs[i]);
         } else {
-          raft->GetTracker().GetConfig().voters_.Incoming().Add(peer_addrs[i]);
+          raft->GetTracker().GetConfig().voters.Incoming().Add(peer_addrs[i]);
         }
         prs[peer_addrs[i]] = pr;
       }

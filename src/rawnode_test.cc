@@ -162,8 +162,8 @@ TEST(RawNode, ProposeAndConfChange) {
     std::shared_ptr<raftpb::ConfState> cs;
     while (!cs) {
       auto rd = raw_node->GetReady();
-      s->Append(rd.entries);
-      for (auto& ent : rd.committed_entries) {
+      s->Append(rd->entries);
+      for (auto& ent : rd->committed_entries) {
         craft::ConfChangeI cc;
         if (ent->type() == raftpb::EntryType::EntryConfChange) {
           raftpb::ConfChange ccc;
@@ -178,9 +178,9 @@ TEST(RawNode, ProposeAndConfChange) {
           cs = std::make_shared<raftpb::ConfState>(raw_node->ApplyConfChange(cc));
         }
       }
-      raw_node->Advance(rd);
+      raw_node->Advance();
       // Once we are the leader, propose a command and a ConfChange.
-      if (!proposed && rd.soft_state->lead == raw_node->GetRaft()->ID()) {
+      if (!proposed && rd->soft_state->lead == raw_node->GetRaft()->ID()) {
         auto s1 = raw_node->Propose("somedata");
         ASSERT_TRUE(s1.IsOK());
         auto [ccv1, ok] = tt.cc.AsV1();
@@ -241,7 +241,7 @@ TEST(RawNode, ProposeAndConfChange) {
     auto rd = raw_node->GetReady();
     std::string context;
     if (!tt.exp.auto_leave()) {
-      ASSERT_TRUE(rd.entries.empty());
+      ASSERT_TRUE(rd->entries.empty());
       if (tt.exp2 == nullptr) {
         continue;
       }
@@ -254,11 +254,11 @@ TEST(RawNode, ProposeAndConfChange) {
     }
 
     // Check that the right ConfChange comes out.
-    ASSERT_EQ(rd.entries.size(), static_cast<size_t>(1));
-    ASSERT_EQ(rd.entries[0]->type(), raftpb::EntryType::EntryConfChangeV2);
+    ASSERT_EQ(rd->entries.size(), static_cast<size_t>(1));
+    ASSERT_EQ(rd->entries[0]->type(), raftpb::EntryType::EntryConfChangeV2);
 
     raftpb::ConfChangeV2 cc;
-    ASSERT_TRUE(cc.ParseFromString(rd.entries[0]->data()));
+    ASSERT_TRUE(cc.ParseFromString(rd->entries[0]->data()));
     ASSERT_EQ(cc.context(), context);
     // Lie and pretend the ConfChange applied. It won't do so because now
     // we require the joint quorum and we're only running one node.
@@ -288,8 +288,8 @@ TEST(RawNode, JointAutoLeave) {
   std::shared_ptr<raftpb::ConfState> cs;
   while (!cs) {
     auto rd = raw_node->GetReady();
-    s->Append(rd.entries);
-    for (auto& ent : rd.committed_entries) {
+    s->Append(rd->entries);
+    for (auto& ent : rd->committed_entries) {
       craft::ConfChangeI cc;
       if (ent->type() == raftpb::EntryType::EntryConfChangeV2) {
         raftpb::ConfChangeV2 ccc;
@@ -302,9 +302,9 @@ TEST(RawNode, JointAutoLeave) {
         cs = std::make_shared<raftpb::ConfState>(raw_node->ApplyConfChange(cc));
       }
     }
-    raw_node->Advance(rd);
+    raw_node->Advance();
     // Once we are the leader, propose a command and a ConfChange.
-    if (!proposed && rd.soft_state->lead == raw_node->GetRaft()->ID()) {
+    if (!proposed && rd->soft_state->lead == raw_node->GetRaft()->ID()) {
       auto s1 = raw_node->Propose("somedata");
       ASSERT_TRUE(s1.IsOK());
       ccdata = test_cc.SerializeAsString();
@@ -334,22 +334,22 @@ TEST(RawNode, JointAutoLeave) {
   // Move the RawNode along. It should not leave joint because it's follower.
   auto rd = raw_node->ReadyWithoutAccept();
   // Check that the right ConfChange comes out.
-  ASSERT_EQ(rd.entries.size(), static_cast<size_t>(0));
+  ASSERT_EQ(rd->entries.size(), static_cast<size_t>(0));
 
   // Make it leader again. It should leave joint automatically after moving apply index.
   raw_node->Campaign();
   rd = raw_node->GetReady();
-  s->Append(rd.entries);
-  raw_node->Advance(rd);
+  s->Append(rd->entries);
+  raw_node->Advance();
   rd = raw_node->GetReady();
-  s->Append(rd.entries);
+  s->Append(rd->entries);
 
   // Check that the right ConfChange comes out.
-  ASSERT_EQ(rd.entries.size(), static_cast<size_t>(1));
-  ASSERT_EQ(rd.entries[0]->type(), raftpb::EntryType::EntryConfChangeV2);
+  ASSERT_EQ(rd->entries.size(), static_cast<size_t>(1));
+  ASSERT_EQ(rd->entries[0]->type(), raftpb::EntryType::EntryConfChangeV2);
 
   raftpb::ConfChangeV2 cc;
-  ASSERT_TRUE(cc.ParseFromString(rd.entries[0]->data()));
+  ASSERT_TRUE(cc.ParseFromString(rd->entries[0]->data()));
   ASSERT_EQ(cc.context().empty(), true);
   // Lie and pretend the ConfChange applied. It won't do so because now
   // we require the joint quorum and we're only running one node.
@@ -363,32 +363,32 @@ TEST(RawNode, RawNodeProposeAddDuplicateNode) {
   auto s = newTestMemoryStorage({withPeers({1})});
   auto raw_node = craft::RawNode::New(newTestConfig(1, 10, 1, s));
   auto rd = raw_node->GetReady();
-  s->Append(rd.entries);
-  raw_node->Advance(rd);
+  s->Append(rd->entries);
+  raw_node->Advance();
 
   raw_node->Campaign();
   while (1) {
     rd = raw_node->GetReady();
-    s->Append(rd.entries);
-    if (rd.soft_state->lead == raw_node->GetRaft()->ID()) {
-      raw_node->Advance(rd);
+    s->Append(rd->entries);
+    if (rd->soft_state->lead == raw_node->GetRaft()->ID()) {
+      raw_node->Advance();
       break;
     }
-    raw_node->Advance(rd);
+    raw_node->Advance();
   }
 
   auto propose_confchange_and_apply = [&raw_node, &rd, &s](raftpb::ConfChange cc) {
     raw_node->ProposeConfChange(craft::ConfChangeI(cc));
     rd = raw_node->GetReady();
-    s->Append(rd.entries);
-    for (auto entry : rd.committed_entries) {
+    s->Append(rd->entries);
+    for (auto entry : rd->committed_entries) {
       if (entry->type() == raftpb::EntryType::EntryConfChange) {
         raftpb::ConfChange cc;
         cc.ParseFromString(entry->data());
         raw_node->ApplyConfChange(craft::ConfChangeI(cc));
       }
     }
-    raw_node->Advance(rd);
+    raw_node->Advance();
   };
 
   raftpb::ConfChange cc1;
@@ -438,9 +438,9 @@ TEST(RawNode, ReadIndex) {
   ASSERT_TRUE(has_ready);
 
   auto rd = rawnode->GetReady();
-  ASSERT_EQ(rd.read_states, wrs);
-  s->Append(rd.entries);
-  rawnode->Advance(rd);
+  ASSERT_EQ(rd->read_states, wrs);
+  s->Append(rd->entries);
+  rawnode->Advance();
   // ensure raft.readStates is reset after advance
   ASSERT_EQ(rawnode->GetRaft()->GetReadStates().size(), static_cast<size_t>(0));
 
@@ -448,17 +448,17 @@ TEST(RawNode, ReadIndex) {
   rawnode->Campaign();
   while (1) {
     rd = rawnode->GetReady();
-    s->Append(rd.entries);
+    s->Append(rd->entries);
 
-    if (rd.soft_state->lead == rawnode->GetRaft()->ID()) {
-      rawnode->Advance(rd);
+    if (rd->soft_state->lead == rawnode->GetRaft()->ID()) {
+      rawnode->Advance();
 
       // Once we are the leader, issue a ReadIndex request
       rawnode->GetRaft()->SetStep(append_step);
       rawnode->ReadIndex(wrequest_ctx);
       break;
     }
-    rawnode->Advance(rd);
+    rawnode->Advance();
   }
   // ensure that MsgReadIndex message is sent to the underlying raft
   ASSERT_EQ(msgs.size(), static_cast<size_t>(1));
@@ -580,13 +580,13 @@ TEST(RawNode, Start) {
   ASSERT_TRUE(rawnode->HasReady());
 
   auto rd = rawnode->GetReady();
-  storage->Append(rd.entries);
-  rawnode->Advance(rd);
+  storage->Append(rd->entries);
+  rawnode->Advance();
 
-  rd.soft_state.reset();
+  rd->soft_state.reset();
   want.soft_state.reset();
 
-  readyEqual(rd, want);
+  readyEqual(*rd, want);
   ASSERT_FALSE(rawnode->HasReady());
 }
 
@@ -610,8 +610,8 @@ TEST(RawNode, Restart) {
   storage->Append(entries);
   auto rawnode = craft::RawNode::New(newTestConfig(1, 10, 1, storage));
   auto rd = rawnode->GetReady();
-  readyEqual(rd, want);
-  rawnode->Advance(rd);
+  readyEqual(*rd, want);
+  rawnode->Advance();
   ASSERT_FALSE(rawnode->HasReady());
 }
 
@@ -641,8 +641,8 @@ TEST(RawNode, RestartFromSnapshot) {
   s->Append(entries);
   auto rawnode = craft::RawNode::New(newTestConfig(1, 10, 1, s));
   auto rd = rawnode->GetReady();
-  readyEqual(rd, want);
-  rawnode->Advance(rd);
+  readyEqual(*rd, want);
+  rawnode->Advance();
   ASSERT_FALSE(rawnode->HasReady());
 }
 
@@ -664,7 +664,7 @@ TEST(RawNode, NodeStatus) {
   ASSERT_EQ(exp->String(), act->String());
 
   craft::ProgressTracker::Config exp_cfg;
-  exp_cfg.voters_.Incoming().Add(1);
+  exp_cfg.voters.Incoming().Add(1);
   ASSERT_EQ(status.config, exp_cfg);
 }
 
@@ -713,12 +713,12 @@ TEST(RawNode, CommitPaginationAfterRestart) {
   auto rawnode = craft::RawNode::New(cfg);
   for (uint64_t highest_applied = 0; highest_applied != 11;) {
     auto rd = rawnode->GetReady();
-    auto n = rd.committed_entries.size();
+    auto n = rd->committed_entries.size();
     ASSERT_NE(n, static_cast<size_t>(0));
-    auto next = rd.committed_entries[0]->index();
+    auto next = rd->committed_entries[0]->index();
     ASSERT_FALSE(highest_applied != 0 && highest_applied + 1 != next);
-    highest_applied = rd.committed_entries[n-1]->index();
-    rawnode->Advance(rd);
+    highest_applied = rd->committed_entries[n-1]->index();
+    rawnode->Advance();
     rawnode->Step(NEW_MSG()
                   .Type(raftpb::MessageType::MsgHeartbeat)
                   .To(1)
@@ -743,19 +743,19 @@ TEST(RawNode, BoundedLogGrowthWithPartition) {
   cfg.max_uncommitted_entries_size = max_entry_size;
   auto rawnode = craft::RawNode::New(cfg);
   auto rd = rawnode->GetReady();
-  s->Append(rd.entries);
-  rawnode->Advance(rd);
+  s->Append(rd->entries);
+  rawnode->Advance();
 
   // Become the leader.
   rawnode->Campaign();
   while (1) {
     rd = rawnode->GetReady();
-    s->Append(rd.entries);
-    if (rd.soft_state->lead == rawnode->GetRaft()->ID()) {
-      rawnode->Advance(rd);
+    s->Append(rd->entries);
+    if (rd->soft_state->lead == rawnode->GetRaft()->ID()) {
+      rawnode->Advance();
       break;
     }
-    rawnode->Advance(rd);
+    rawnode->Advance();
   }
 
 	// Simulate a network partition while we make our proposals by never
@@ -775,9 +775,9 @@ TEST(RawNode, BoundedLogGrowthWithPartition) {
 	// Recover from the partition. The uncommitted tail of the Raft log should
 	// disappear as entries are committed.
   rd = rawnode->GetReady();
-  ASSERT_EQ(rd.committed_entries.size(), max_entries);
-  s->Append(rd.entries);
-  rawnode->Advance(rd);
+  ASSERT_EQ(rd->committed_entries.size(), max_entries);
+  s->Append(rd->entries);
+  rawnode->Advance();
   check_uncommitted(0);
 }
 
@@ -792,8 +792,8 @@ TEST(RawNode, ConsumeReady) {
   // Inject first message, make sure it's visible via readyWithoutAccept.
   rn->GetRaft()->GetMsgsForTest().push_back(m1);
   auto rd = rn->ReadyWithoutAccept();
-  ASSERT_EQ(rd.messages.size(), static_cast<size_t>(1));
-  ASSERT_EQ(rd.messages[0]->context(), m1->context());
+  ASSERT_EQ(rd->messages.size(), static_cast<size_t>(1));
+  ASSERT_EQ(rd->messages[0]->context(), m1->context());
 
   ASSERT_EQ(rn->GetRaft()->Msgs().size(), static_cast<size_t>(1));
   ASSERT_EQ(rn->GetRaft()->Msgs()[0]->context(), m1->context());
@@ -802,11 +802,11 @@ TEST(RawNode, ConsumeReady) {
 	// to leaving it in both places).
   rd = rn->GetReady();
   ASSERT_EQ(rn->GetRaft()->Msgs().size(), static_cast<size_t>(0));
-  ASSERT_EQ(rd.messages.size(), static_cast<size_t>(1));
-  ASSERT_EQ(rd.messages[0]->context(), m1->context());
+  ASSERT_EQ(rd->messages.size(), static_cast<size_t>(1));
+  ASSERT_EQ(rd->messages[0]->context(), m1->context());
   // Add a message to raft to make sure that Advance() doesn't drop it.
   rn->GetRaft()->GetMsgsForTest().push_back(m2);
-  rn->Advance(rd);
+  rn->Advance();
   ASSERT_EQ(rn->GetRaft()->Msgs().size(), static_cast<size_t>(1));
   ASSERT_EQ(rn->GetRaft()->Msgs()[0]->context(), m2->context());
 }

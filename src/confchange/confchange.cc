@@ -32,22 +32,22 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::EnterJoint(
     return err(Status::Error("config is already joint"));
   }
 
-  if (cfg.voters_.Incoming().Size() == 0) {
+  if (cfg.voters.Incoming().Size() == 0) {
 		// We allow adding nodes to an empty config for convenience (testing and
 		// bootstrap), but you can't enter a joint state.
     return err(Status::Error("can't make a zero-voter config joint"));
   }
 
   // Clear the outgoing config.
-  cfg.voters_.Outgoing().Reset();
+  cfg.voters.Outgoing().Reset();
   // Copy incoming to outgoing.
-  cfg.voters_.Outgoing() = cfg.voters_.Incoming();
+  cfg.voters.Outgoing() = cfg.voters.Incoming();
 
   status = Apply(cfg, prs, ccs);
   if (!status.IsOK()) {
     return err(std::move(status));
   }
-  cfg.auto_leave_ = auto_leave;
+  cfg.auto_leave = auto_leave;
   return CheckAndReturn(std::move(cfg), std::move(prs));
 }
 
@@ -59,24 +59,24 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::LeaveJoint() c
   if (!cfg.Joint()) {
     return err(Status::Error("can't leave a non-joint config"));
   }
-  if (cfg.voters_.Outgoing().Size() == 0) {
+  if (cfg.voters.Outgoing().Size() == 0) {
     return err(Status::Error("configuration is not joint: %s", cfg.String().c_str()));
   }
-  for (auto id : cfg.learners_next_) {
-    cfg.learners_.insert(id);
+  for (auto id : cfg.learners_next) {
+    cfg.learners.insert(id);
     GetProgress(prs, id)->SetIsLearner(true);
   }
-  cfg.learners_next_.clear();
+  cfg.learners_next.clear();
 
-  for (auto id : cfg.voters_.Outgoing().IDs()) {
-    bool is_voter = cfg.voters_.Incoming().Exist(id);
-    bool is_learner = cfg.learners_.count(id) != 0;
+  for (auto id : cfg.voters.Outgoing().IDs()) {
+    bool is_voter = cfg.voters.Incoming().Exist(id);
+    bool is_learner = cfg.learners.count(id) != 0;
     if (!is_voter && !is_learner) {
       prs.erase(id);
     }
   }
-  cfg.voters_.Outgoing().Reset();
-  cfg.auto_leave_ = false;
+  cfg.voters.Outgoing().Reset();
+  cfg.auto_leave = false;
 
   return CheckAndReturn(std::move(cfg), std::move(prs));
 }
@@ -94,7 +94,7 @@ std::tuple<ProgressTracker::Config, ProgressMap, Status> Changer::Simple(
   if (!status.IsOK()) {
     return err(std::move(status));
   }
-  auto n = Symdiff(tracker_.GetConfig().voters_.Incoming().IDs(), cfg.voters_.Incoming().IDs());
+  auto n = Symdiff(tracker_.GetConfig().voters.Incoming().IDs(), cfg.voters.Incoming().IDs());
   if (n > 1) {
     return err(Status::Error("more than one voter changed without entering joint config"));
   }
@@ -126,7 +126,7 @@ Status Changer::Apply(ProgressTracker::Config& cfg, ProgressMap& prs,
       return Status::Error("unexpected conf type %d", cc.type());
     }
   }
-  if (cfg.voters_.Incoming().Size() == 0) {
+  if (cfg.voters.Incoming().Size() == 0) {
     return Status::Error("removed all voters");
   }
   return Status::OK();
@@ -140,9 +140,9 @@ void Changer::MakeVoter(ProgressTracker::Config& cfg, ProgressMap& prs,
     return;
   }
   pr->SetIsLearner(false);
-  cfg.learners_.erase(id);
-  cfg.learners_next_.erase(id);
-  cfg.voters_.Incoming().Add(id);
+  cfg.learners.erase(id);
+  cfg.learners_next.erase(id);
+  cfg.voters.Incoming().Add(id);
 }
 
 void Changer::MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs,
@@ -164,11 +164,11 @@ void Changer::MakeLearner(ProgressTracker::Config& cfg, ProgressMap& prs,
 	// be turned into a learner in LeaveJoint().
 	//
 	// Otherwise, add a regular learner right away.
-  if (cfg.voters_.Outgoing().Exist(id)) {
-    cfg.learners_next_.insert(id);
+  if (cfg.voters.Outgoing().Exist(id)) {
+    cfg.learners_next.insert(id);
   } else {
     pr->SetIsLearner(true);
-    cfg.learners_.insert(id);
+    cfg.learners.insert(id);
   }
 }
 
@@ -178,12 +178,12 @@ void Changer::Remove(ProgressTracker::Config& cfg, ProgressMap& prs,
   if (!pr) {
     return;
   }
-  cfg.voters_.Incoming().Remove(id);
-  cfg.learners_.erase(id);
-  cfg.learners_next_.erase(id);
+  cfg.voters.Incoming().Remove(id);
+  cfg.learners.erase(id);
+  cfg.learners_next.erase(id);
 
 	// If the peer is still a voter in the outgoing config, keep the Progress.
-  if (!cfg.voters_.Outgoing().Exist(id)) {
+  if (!cfg.voters.Outgoing().Exist(id)) {
     prs.erase(id);
   }
 }
@@ -191,9 +191,9 @@ void Changer::Remove(ProgressTracker::Config& cfg, ProgressMap& prs,
 void Changer::InitProgress(ProgressTracker::Config& cfg, ProgressMap& prs,
                            uint64_t id, bool is_learner) const {
   if (!is_learner) {
-    cfg.voters_.Incoming().Add(id);
+    cfg.voters.Incoming().Add(id);
   } else {
-    cfg.learners_.insert(id);
+    cfg.learners.insert(id);
   }
 
   prs[id] = std::make_shared<Progress>(
@@ -233,23 +233,23 @@ Status Changer::CheckInvariants(const ProgressTracker::Config& cfg,
     }
     return Status::OK();
   };
-  auto status = check_exist(cfg.voters_.IDs());
+  auto status = check_exist(cfg.voters.IDs());
   if (!status.IsOK()) {
     return status;
   }
-  status = check_exist(cfg.learners_);
+  status = check_exist(cfg.learners);
   if (!status.IsOK()) {
     return status;
   }
-  status = check_exist(cfg.learners_next_);
+  status = check_exist(cfg.learners_next);
   if (!status.IsOK()) {
     return status;
   }
 
 	// Any staged learner was staged because it could not be directly added due
 	// to a conflicting voter in the outgoing config.
-  for (auto id : cfg.learners_next_) {
-    if (!cfg.voters_.Outgoing().Exist(id)) {
+  for (auto id : cfg.learners_next) {
+    if (!cfg.voters.Outgoing().Exist(id)) {
       return Status::Error("%d is in LearnersNext, but not Voters[1]", id);
     }
     if (GetProgress(prs, id)->IsLearner()) {
@@ -258,11 +258,11 @@ Status Changer::CheckInvariants(const ProgressTracker::Config& cfg,
   }
 
 	// Conversely Learners and Voters doesn't intersect at all.
-  for (auto id : cfg.learners_) {
-    if (cfg.voters_.Outgoing().Exist(id)) {
+  for (auto id : cfg.learners) {
+    if (cfg.voters.Outgoing().Exist(id)) {
       return Status::Error("%d is in Learners and Voters[1]", id);
     }
-    if (cfg.voters_.Incoming().Exist(id)) {
+    if (cfg.voters.Incoming().Exist(id)) {
       return Status::Error("%d is in Learners and Voters[0]", id);
     }
     if (!GetProgress(prs, id)->IsLearner()) {
@@ -271,13 +271,13 @@ Status Changer::CheckInvariants(const ProgressTracker::Config& cfg,
   }
 
   if (!cfg.Joint()) {
-    if (cfg.voters_.Outgoing().Size() > 0) {
+    if (cfg.voters.Outgoing().Size() > 0) {
       return Status::Error("cfg.Voters[1] must be nil when not joint");
     }
-    if (!cfg.learners_next_.empty()) {
+    if (!cfg.learners_next.empty()) {
       return Status::Error("cfg.LearnersNext must be nil when not joint");
     }
-    if (cfg.auto_leave_) {
+    if (cfg.auto_leave) {
       return Status::Error("AutoLeave must be false when not joint");
     }
   }

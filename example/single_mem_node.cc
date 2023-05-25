@@ -1,3 +1,16 @@
+// Copyright 2023 JT
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -26,17 +39,17 @@ static void onReady(Peer& peer, std::map<std::string, std::function<void()>>& wa
   // Persistent hard state and entries.
   // rd.hard_state / rd.entries
 
-  if (!craft::IsEmptySnap(rd.snapshot)) {
+  if (!craft::IsEmptySnap(rd->snapshot)) {
     // Persistent snapshot
-    peer.storage->ApplySnapshot(rd.snapshot);
+    peer.storage->ApplySnapshot(rd->snapshot);
     // Apply snapshot
   }
 
-  peer.storage->Append(rd.entries);
+  peer.storage->Append(rd->entries);
 
   auto handle_messages = [](const craft::MsgPtrs& msgs) {
   };
-  handle_messages(rd.messages);
+  handle_messages(rd->messages);
 
   auto handle_committed_entries = [&waiters](const craft::EntryPtrs& ents) {
     for (auto& ent : ents) {
@@ -53,9 +66,9 @@ static void onReady(Peer& peer, std::map<std::string, std::function<void()>>& wa
       }
     }
   };
-  handle_committed_entries(rd.committed_entries);
+  handle_committed_entries(rd->committed_entries);
 
-  peer.rn->Advance(rd);
+  peer.rn->Advance();
 }
 
 static void sendPropose(std::shared_ptr<craft::Logger> logger, moodycamel::BlockingConcurrentQueue<std::any>& q) {

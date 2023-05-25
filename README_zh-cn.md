@@ -1,25 +1,24 @@
 # Raft
-[中文介绍](./README_zh-cn.md)
-## Abstract
-Raft is a distributed consensus algorithm designed to manage replication of state machines in distributed systems. Its purpose is to ensure data consistency across multiple servers, despite failures and network partitions. It is widely used in modern distributed systems like etcd, cockroach, and tikv, providing a solid foundation for maintaining data consistency and reliability.
+## 简介
+Raft 是一种分布式一致性算法，旨在管理分布式系统中的复制状态机。它的目的是确保多个服务器之间的数据一致性，尽管存在故障和网络分区。这种算法在现代分布式系统（如 etcd、cockroach 和 tikv）中广泛应用，为维护数据一致性和可靠性提供了坚实的基础。
 
-The library includes only the raft algorithm, leaving the network and storage layers to be implemented by the user, which makes the library more flexible and customizable.
-## Build
+该库仅包括 raft 算法，将网络层和存储层留给用户自己实现，这使得该库更加灵活和可定制。
+## 编译
 > - bazel > 3.0
 > - c++17
 
-### Build all
+### 编译所有（包括example和所有测试）
 ```shell
 bazel build //...
 ```
-All binary files will be generated in the bazel-bin directory.
-### Build all tests
+在bazel-bin目录下将生成所有二进制文件
+### 运行所有测试
 ```shell
 bazel test //...
 ```
-### Using in your project
-First add the following to your **WORKSPACE**.
+### 在你的项目中使用
 
+首先在你的**WORKSPACE**添加
 ```shell
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
@@ -30,8 +29,7 @@ git_repository(
     remote = "https://github.com/ImSjt/raft-cpp.git",
 )
 ```
-Since the library depends on protobuf, you also need to add the following to your **WORKSPACE**.
-
+由于raft-cpp需要使用到protobuf，所以还需要在你的**WORKSPACE**加上下面内容
 ```shell
 
 # rules_cc defines rules for generating C++ code from Protocol Buffers.
@@ -64,8 +62,7 @@ rules_proto_dependencies()
 rules_proto_toolchains()
 
 ```
-Reference the library in **BUILD** file.
-
+在**BUILD**文件中引用raft-cpp
 ```shell
 package(default_visibility = ["//visibility:public"])
   
@@ -79,7 +76,7 @@ cc_binary(
   ],
 )
 ```
-Start using the raft-cpp.
+开始使用raft-cpp
 ```c++
 #include "rawnode.h"
 
@@ -101,10 +98,10 @@ int main(int argc, char* argv[]) {
 }
 ```
 
-## Usage
-Start a node from scratch using RawNode::Start or start a node from some initial state using RawNode::Restart.
+## 用法
+使用RawNode::Start从头开始建立一个节点，使用RawNode::Restart从某个初始状态启动一个节点。
 
-**To start a three-node cluster**
+**启动三节点集群**
 
 ```c++
   auto logger = std::make_shared<craft::ConsoleLogger>();
@@ -122,10 +119,9 @@ Start a node from scratch using RawNode::Start or start a node from some initial
   // Note that they need to be started separately as well.
   auto rn = craft::RawNode::Start(cfg, {craft::Peer{1}, craft::Peer{2}, craft::Peer{3}});
 ```
-**Adding a node to the cluster**
+**添加新节点到集群中**
 
-First add a new node by calling `Rawnode::ProposeConfChange` to one of the nodes in the cluster, and then start an empty new node as follows.
-
+首先通过向集群中某个节点调用`ProposeConfChange`添加新节点，然后再启动一个空的新节点，如下。
 ```c++
   auto logger = std::make_shared<craft::ConsoleLogger>();
   auto storage = std::make_shared<craft::MemoryStorage>(logger);
@@ -142,7 +138,7 @@ First add a new node by calling `Rawnode::ProposeConfChange` to one of the nodes
   // Peer information should be synchronized from the leader.
   auto rn = craft::RawNode::ReStart(cfg);
 ```
-**To restart a node from state**
+**使用旧状态启动节点**
 ```c++
   auto logger = std::make_shared<craft::ConsoleLogger>();
   auto storage = std::make_shared<craft::MemoryStorage>(logger);
@@ -165,34 +161,39 @@ First add a new node by calling `Rawnode::ProposeConfChange` to one of the nodes
   // Peer information is already included in the storage.
   auto rn = craft::RawNode::ReStart(cfg);
 ```
-**After creating the node, there is still some work to be done**
+**创建节点后，还有一些工作要做**
 
-First read ready by RawNode::GetReady and process the updates it contains.
+首先通过RawNode::GetReady()读取并处理最新的更新。
 
-1. Persist Entries, HardState, Snapshot, write to Entries first, and then write to HardState and Snapshot if they are not empty.
-2. Send the messages to the specified node. If there is a MsgSnap type, call the RawNode::ReportSnapshot after sending the snapshot.
-3. Apply snapshot and committed_entries to the state machine, if the committed_entries have EntryConfChange type entries, then you need to call RawNode::ApplyConfChange to apply.
-4. The final call to RawNode::Advance() indicates that processing is complete and the next batch of updates can be accepted.
+1. 将Entries、HardState、Snapshot持久化，先写入Entries，如果HardState和Snapshot不为空再将它们写入。
+2. 将messages发送到指定的节点，如果有MsgSnap类型，在发送完snapshot后要调用RawNode::ReportSnapshot接口。
+3. 应用snapshot和committed_entries到状态机中，如果committed_entries中有EntryConfChange类型的entry，那么需要调用RawNode::ApplyConfChange应用。
+4. 最后调用RawNode::Advance()表示处理完成，可以接受下一批更新。
 
-**Call awNode::Tick at regular intervals**
-```c++
-void RawNode::Tick();
-```
-RawNode::Tick will drive Raft's heartbeat and election timeout.
-
-**RawNode::Step needs to be called when a message is received to process**
+**在收到消息时需要调用RawNode::Step处理**
 ```c++
 void RawNode::Step(MsgPtr m);
 ```
+*最后，需要定时调用RawNode::Tick*
+```c++
+void RawNode::Tick();
+```
+RawNode::Tick会驱动Raft的心跳机制以及选举机制。
 
-**Send request using RawNode::Propose**
+**发送请求需要使用RawNode::Propose处理**
 
-Serialize the request into a string before sending it.
+将请求序列化成字符串再发送。
 ```c++
 Status RawNode::Propose(const std::string& data);
 ```
 
-The whole process is similar to the following.
+**处理消息需要调用RawNode::Step处理**
+
+```c++
+Status RawNode::Step(MsgPtr m);
+```
+
+整个流程类似于下面。
 ```c++
   while (1) {
     auto items = queue.wait_dequeue(timeout);
@@ -227,9 +228,10 @@ The whole process is similar to the following.
     n->Advance();
   }
 ```
-## Thank
-This project references the go implementation of etcd raft, thanks to etcd for providing such an elegant implementation.
-## Reference
+## 感谢
+该项目参考了etcd raft的实现，感谢etcd提供了如此优雅的实现。
+
+## 参考
 - [Etcd Raft](https://github.com/etcd-io/raft)
 - [Raft Paper](https://raft.github.io/raft.pdf)
 - [The Raft Site](https://raft.github.io/)

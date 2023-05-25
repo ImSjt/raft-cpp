@@ -440,7 +440,7 @@ void Raft::Advance(const Ready& rd) {
     auto old_applied = raft_log_->Applied();
     raft_log_->AppliedTo(new_applied);
 
-    if (trk_.GetConfig().auto_leave_ && old_applied <= pending_conf_index_ &&
+    if (trk_.GetConfig().auto_leave && old_applied <= pending_conf_index_ &&
         new_applied >= pending_conf_index_ &&
         state_ == RaftStateType::kLeader) {
 			// If the current (and most recent, at least for this leader's term)
@@ -1008,7 +1008,7 @@ Status Raft::StepLeader(MsgPtr m) {
         }
         if (!cc.IsNull()) {
           auto already_pending = pending_conf_index_ > raft_log_->Applied();
-          auto already_joint = trk_.GetConfig().voters_.At(1).Size() > 0;
+          auto already_joint = trk_.GetConfig().voters.At(1).Size() > 0;
           auto wants_leave_joint = cc.AsV2().changes().size() == 0;
 
           std::string refused;
@@ -1267,7 +1267,7 @@ Status Raft::StepLeader(MsgPtr m) {
         return Status::OK();
       }
 
-      if (trk_.GetConfig().voters_.VoteResult(read_only_->RecvAck(
+      if (trk_.GetConfig().voters.VoteResult(read_only_->RecvAck(
               m->from(), m->context())) != VoteState::kVoteWon) {
         return Status::OK();
       }
@@ -1761,7 +1761,7 @@ raftpb::ConfState Raft::SwitchToConfig(const ProgressTracker::Config& cfg,
   }
   // If the leadTransferee was removed or demoted, abort the leadership
   // transfer.
-  if (trk_.GetConfig().voters_.IDs().count(lead_transferee_) == 0 &&
+  if (trk_.GetConfig().voters.IDs().count(lead_transferee_) == 0 &&
       lead_transferee_ != 0) {
     AbortLeaderTransfer();
   }

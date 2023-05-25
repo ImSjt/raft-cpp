@@ -106,7 +106,7 @@ TEST(ConfChange, Quick) {
     auto [cfg2a, prs2a, s2] = c.EnterJoint(true, ccs);
     EXPECT_TRUE(s2.IsOK()) << s2.Str();
 
-    cfg2a.auto_leave_ = false;
+    cfg2a.auto_leave = false;
     EXPECT_EQ(cfg, cfg2a);
     EXPECT_TRUE(isEqual(prs, prs2a));
 

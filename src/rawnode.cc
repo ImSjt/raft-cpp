@@ -156,46 +156,21 @@ Status RawNode::Step(MsgPtr m) {
   return Status::Error(kErrStepPeerNotFound);
 }
 
-Ready RawNode::GetReady() {
-  auto rd = ReadyWithoutAccept();
-  AcceptReady(rd);
-  return rd;
+std::shared_ptr<Ready> RawNode::GetReady() {
+  ready_ = ReadyWithoutAccept();
+  AcceptReady(ready_);
+  return ready_;
 }
 
-Ready RawNode::ReadyWithoutAccept() {
-  // Ready rd;
-  // rd.entries = raft_->GetRaftLog()->UnstableEntries();
-  // rd.committed_entries = raft_->GetRaftLog()->NextEnts();
-  // rd.messages = raft_->Msgs();
-
-  // auto soft_st = raft_->GetSoftState();
-  // if (soft_st != *prev_soft_st_) {
-  //   rd.soft_state = soft_st;
-  // }
-
-  // auto hard_st = raft_->GetHardState();
-  // if (hard_st != *prev_hard_st_) {
-  //   rd.hard_state = hard_st;
-  // }
-
-  // if (raft_->GetRaftLog()->UnstableSnapshot()) {
-  //   rd.snapshot = raft_->GetRaftLog()->UnstableSnapshot();
-  // }
-
-  // if (!raft_->GetReadStates().empty()) {
-  //   rd.read_states = raft_->GetReadStates();
-  // }
-
-  // rd.must_sync = MustSync(raft_->GetHardState(), *prev_hard_st_, rd.entries.size());
-  // return rd;
+std::shared_ptr<Ready> RawNode::ReadyWithoutAccept() {
   return NewReady(raft_.get(), prev_soft_st_, prev_hard_st_);
 }
 
-void RawNode::AcceptReady(const Ready& rd) {
-  if (rd.soft_state.has_value()) {
-    prev_soft_st_ = *(rd.soft_state);
+void RawNode::AcceptReady(std::shared_ptr<Ready> rd) {
+  if (rd->soft_state.has_value()) {
+    prev_soft_st_ = *(rd->soft_state);
   }
-  if (!rd.read_states.empty()) {
+  if (!rd->read_states.empty()) {
     raft_->ClearReadStates();
   }
   raft_->ClearMsgs();
@@ -223,11 +198,12 @@ bool RawNode::HasReady() const {
   return false;
 }
 
-void RawNode::Advance(const Ready& rd) {
-  if (!IsEmptyHardState(rd.hard_state)) {
-    prev_hard_st_ = rd.hard_state;
+void RawNode::Advance() {
+  if (!IsEmptyHardState(ready_->hard_state)) {
+    prev_hard_st_ = ready_->hard_state;
   }
-  raft_->Advance(rd);
+  raft_->Advance(*ready_);
+  ready_.reset();
 }
 
 NodeStatus RawNode::GetStatus() const {
@@ -294,33 +270,34 @@ void RawNode::ReadIndex(const std::string& rctx) {
   raft_->Step(m);
 }
 
-Ready NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardState& prev_hard_st) {
-  Ready rd;
-  rd.entries = raft->GetRaftLog()->UnstableEntries();
-  rd.committed_entries = raft->GetRaftLog()->NextEnts();
-  rd.messages = raft->Msgs();
+std::shared_ptr<Ready> NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardState& prev_hard_st) {
+  auto rd = std::make_shared<Ready>();
+
+  rd->entries = raft->GetRaftLog()->UnstableEntries();
+  rd->committed_entries = raft->GetRaftLog()->NextEnts();
+  rd->messages = raft->Msgs();
 
   auto soft_st = raft->GetSoftState();
   if (!(soft_st == prev_soft_st)) {
-    rd.soft_state = soft_st;
+    rd->soft_state = soft_st;
   }
 
   auto hard_st = raft->GetHardState();
   if (!(hard_st == prev_hard_st)) {
-    rd.hard_state = hard_st;
+    rd->hard_state = hard_st;
   }
 
   if (raft->GetRaftLog()->UnstableSnapshot()) {
-    rd.snapshot = raft->GetRaftLog()->UnstableSnapshot();
+    rd->snapshot = raft->GetRaftLog()->UnstableSnapshot();
   } else {
-    rd.snapshot = std::make_shared<raftpb::Snapshot>();
+    rd->snapshot = std::make_shared<raftpb::Snapshot>();
   }
 
   if (!raft->GetReadStates().empty()) {
-    rd.read_states = raft->GetReadStates();
+    rd->read_states = raft->GetReadStates();
   }
 
-  rd.must_sync = MustSync(raft->GetHardState(), prev_hard_st, rd.entries.size());
+  rd->must_sync = MustSync(raft->GetHardState(), prev_hard_st, rd->entries.size());
   return rd;
 }
 

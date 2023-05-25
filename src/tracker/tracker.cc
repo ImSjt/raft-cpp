@@ -55,31 +55,31 @@ const ProgressPtr GetProgress(const ProgressMap& prs, uint64_t id) {
 raftpb::ConfState ProgressTracker::ConfState() {
   raftpb::ConfState conf_state;
 
-  std::vector<uint64_t> voters = config_.voters_.Incoming().Slice();
+  std::vector<uint64_t> voters = config_.voters.Incoming().Slice();
   for (uint64_t voter : voters) {
     conf_state.add_voters(voter);
   }
 
-  std::vector<uint64_t> voters_outgoing = config_.voters_.Outgoing().Slice();
+  std::vector<uint64_t> voters_outgoing = config_.voters.Outgoing().Slice();
   for (uint64_t voter : voters_outgoing) {
     conf_state.add_voters_outgoing(voter);
   }
 
-  for (uint64_t learner : config_.learners_) {
+  for (uint64_t learner : config_.learners) {
     conf_state.add_learners(learner);
   }
 
-  for (uint64_t learner : config_.learners_next_) {
+  for (uint64_t learner : config_.learners_next) {
     conf_state.add_learners_next(learner);
   }
 
-  conf_state.set_auto_leave(config_.auto_leave_);
+  conf_state.set_auto_leave(config_.auto_leave);
 
   return conf_state;
 }
 
 uint64_t ProgressTracker::Committed() const {
-  return config_.voters_.CommittedIndex(MatchAckIndexer(&progress_));
+  return config_.voters.CommittedIndex(MatchAckIndexer(&progress_));
 }
 
 void ProgressTracker::Visit(Closure&& func) {
@@ -97,11 +97,11 @@ bool ProgressTracker::QuorumActive() {
     votes[id] = pr->RecentActive();
   });
 
-  return config_.voters_.VoteResult(votes) == kVoteWon;
+  return config_.voters.VoteResult(votes) == kVoteWon;
 }
 
 std::vector<uint64_t> ProgressTracker::VoterNodes() {
-  std::set<uint64_t> m = config_.voters_.IDs();
+  std::set<uint64_t> m = config_.voters.IDs();
   std::vector<uint64_t> nodes;
   for (uint64_t n : m) {
     nodes.push_back(n);
@@ -110,12 +110,12 @@ std::vector<uint64_t> ProgressTracker::VoterNodes() {
 }
 
 std::vector<uint64_t> ProgressTracker::LearnerNodes() {
-  if (config_.learners_.empty()) {
+  if (config_.learners.empty()) {
     return {};
   }
 
   std::vector<uint64_t> nodes;
-  for (uint64_t n : config_.learners_) {
+  for (uint64_t n : config_.learners) {
     nodes.push_back(n);
   }
   return nodes;
@@ -149,7 +149,7 @@ std::tuple<int32_t, int32_t, VoteState> ProgressTracker::TallyVotes() const {
       rejected++;
     }
   }
-  return std::make_tuple(granted, rejected, config_.voters_.VoteResult(votes_));
+  return std::make_tuple(granted, rejected, config_.voters.VoteResult(votes_));
 }
 
 std::shared_ptr<Progress> ProgressTracker::GetProgress(uint64_t id) {

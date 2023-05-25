@@ -1,3 +1,16 @@
+// Copyright 2023 JT
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -102,20 +115,20 @@ static void onReady(std::shared_ptr<Node> node, Transport& transport) {
   // Persistent hard state and entries.
   // rd.hard_state / rd.entries
 
-  if (!craft::IsEmptySnap(rd.snapshot)) {
+  if (!craft::IsEmptySnap(rd->snapshot)) {
     // Persistent snapshot
-    node->storage->ApplySnapshot(rd.snapshot);
+    node->storage->ApplySnapshot(rd->snapshot);
     // Apply snapshot
   }
 
-  node->storage->Append(rd.entries);
+  node->storage->Append(rd->entries);
 
   auto handle_messages = [&transport](const craft::MsgPtrs& msgs) {
     for (auto msg : msgs) {
       transport.Send(msg);
     }
   };
-  handle_messages(rd.messages);
+  handle_messages(rd->messages);
 
   auto handle_committed_entries = [node](const craft::EntryPtrs& ents) {
     for (auto& ent : ents) {
@@ -140,9 +153,9 @@ static void onReady(std::shared_ptr<Node> node, Transport& transport) {
       }
     }
   };
-  handle_committed_entries(rd.committed_entries);
+  handle_committed_entries(rd->committed_entries);
 
-  node->rn->Advance(rd);
+  node->rn->Advance();
 }
 
 static int64_t genId() {

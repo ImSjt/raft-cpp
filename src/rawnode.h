@@ -131,16 +131,16 @@ class RawNode {
   // includes appending and applying entries or a snapshot, updating the HardState,
   // and sending messages. The returned Ready() *must* be handled and subsequently
   // passed back via Advance().
-  Ready GetReady();
+  std::shared_ptr<Ready> GetReady();
 
   // ReadyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
   // is no obligation that the Ready must be handled.
-  Ready ReadyWithoutAccept();
+  std::shared_ptr<Ready> ReadyWithoutAccept();
 
   // acceptReady is called when the consumer of the RawNode has decided to go
   // ahead and handle a Ready. Nothing must alter the state of the RawNode between
   // this call and the prior call to Ready().
-  void AcceptReady(const Ready& rd);
+  void AcceptReady(std::shared_ptr<Ready> rd);
 
   // HasReady called when RawNode user need to check if any Ready pending.
   // Checking logic in this method should be consistent with Ready.containsUpdates().
@@ -148,7 +148,7 @@ class RawNode {
 
   // Advance notifies the RawNode that the application has applied and saved progress in the
   // last Ready results.
-  void Advance(const Ready& rd);
+  void Advance();
 
   // GetStatus returns the current status of the given group. This allocates, see
   // BasicStatus and WithProgress for allocation-friendlier choices.
@@ -177,23 +177,16 @@ class RawNode {
   // processed safely. The read state will have the same rctx attached.
   void ReadIndex(const std::string& rctx);
 
-  // void SetPreSoftState(const SoftState& state) {
-  //   pre_soft_st_ = state;
-  // }
-  // void SetPreHardState(const raftpb::HardState& state) {
-  //   pre_hard_st_ = state;
-  // }
-
   Raft* GetRaft() { return raft_.get(); }
 
  private:
   std::unique_ptr<Raft> raft_;
-  // std::optional<SoftState> prev_soft_st_;
-  // std::optional<raftpb::HardState> prev_hard_st_;
   SoftState prev_soft_st_;
   raftpb::HardState prev_hard_st_;
+
+  std::shared_ptr<Ready> ready_;
 };
 
-Ready NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardState& prev_hard_st);
+std::shared_ptr<Ready> NewReady(Raft* raft, const SoftState& prev_soft_st, const raftpb::HardState& prev_hard_st);
 
 }  // namespace craft

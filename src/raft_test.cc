@@ -2320,8 +2320,8 @@ TEST(Raft, LearnerReceiveSnapshot) {
 
   n1->Get()->Restore(s);
   auto ready = craft::NewReady(n1->Get(), craft::SoftState{}, raftpb::HardState{});
-  storage->ApplySnapshot(ready.snapshot);
-  n1->Get()->Advance(ready);
+  storage->ApplySnapshot(ready->snapshot);
+  n1->Get()->Advance(*ready);
 
 	// Force set n1 appplied index.
   n1->Get()->GetRaftLog()->AppliedTo(n1->Get()->GetRaftLog()->Committed());
@@ -2851,8 +2851,8 @@ TEST(Raft, LeaderTransferAfterSnapshot) {
   // Apply snapshot and resume progress
   auto follower = std::dynamic_pointer_cast<Raft>(nt->Peers()[3]);
   auto ready = craft::NewReady(follower->Get(), craft::SoftState{}, raftpb::HardState{});
-  nt->Storages()[3]->ApplySnapshot(ready.snapshot);
-  follower->Get()->Advance(ready);
+  nt->Storages()[3]->ApplySnapshot(ready->snapshot);
+  follower->Get()->Advance(*ready);
   nt->SetMsgHook(nullptr);
   nt->Send({filtered});
   checkLeaderTransferState(lead->Get(), craft::RaftStateType::kFollower, 3);
