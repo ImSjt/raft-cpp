@@ -227,7 +227,7 @@ The whole process is similar to the following.
     n->Advance();
   }
 ```
-## Thank
+## Acknowledgements
 This project references the go implementation of etcd raft, thanks to etcd for providing such an elegant implementation.
 ## Reference
 - [Etcd Raft](https://github.com/etcd-io/raft)
